@@ -1,5 +1,17 @@
 # Changelog — Skadoosh converter
 
+## 1.2.0 — 2026-07-17
+
+- **Formats modernes via ImageMagick** : HEIC/HEIF (photos iPhone), WebP
+  et AVIF acceptés en entrée ; **WebP disponible en cible**. `magick.exe`
+  portable, téléchargé dans `bin\` à la demande
+  (`scripts\install-magick.ps1`, dernière version portable officielle).
+- Le bouton devient « Installer les dépendances » et installe ce qui
+  manque (FFmpeg et/ou ImageMagick), toujours caché, toujours en
+  arrière-plan.
+- Vers ICO et PDF, les sources modernes passent par un PNG intermédiaire
+  puis par notre pipeline natif : rendu identique aux autres formats.
+
 ## 1.1.0 — 2026-07-17
 
 - La conversion de documents (LibreOffice) est retirée : pas de solution

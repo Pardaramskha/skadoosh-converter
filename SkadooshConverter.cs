@@ -117,21 +117,36 @@ namespace SkadooshConverter
         public static readonly HashSet<string> ExtsImages =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "png", "jpg", "jpeg", "bmp", "gif", "tif", "tiff", "ico" };
+        // Formats modernes que GDI+ ne sait pas lire : ils passent par
+        // ImageMagick (photos iPhone en HEIC, WebP et AVIF du web).
+        public static readonly HashSet<string> ExtsImagesMagick =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "heic", "heif", "webp", "avif" };
         public static readonly HashSet<string> ExtsAudio =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "wma", "opus", "aiff" };
 
         public static readonly string[] CiblesImages =
-            new string[] { "png", "jpg", "bmp", "gif", "tiff", "ico", "pdf" };
+            new string[] { "png", "jpg", "webp", "bmp", "gif", "tiff", "ico", "pdf" };
         public static readonly string[] CiblesAudio =
             new string[] { "mp3", "wav", "flac", "ogg", "m4a", "opus" };
 
         public static Categorie CategorieDe(string path)
         {
             var ext = Path.GetExtension(path).TrimStart('.');
-            if (ExtsImages.Contains(ext)) return Categorie.Images;
+            if (ExtsImages.Contains(ext) || ExtsImagesMagick.Contains(ext))
+                return Categorie.Images;
             if (ExtsAudio.Contains(ext)) return Categorie.Audio;
             return Categorie.Aucune;
+        }
+
+        // Cette conversion a-t-elle besoin d'ImageMagick ? (source moderne
+        // illisible par GDI+, ou cible WebP que GDI+ ne sait pas écrire)
+        public static bool NecessiteMagick(string source, string cible)
+        {
+            if (ExtsImagesMagick.Contains(Path.GetExtension(source).TrimStart('.')))
+                return true;
+            return cible == "webp";
         }
 
         // Même format des deux côtés ? (jpeg == jpg, etc.)
@@ -142,6 +157,7 @@ namespace SkadooshConverter
             if (ext == cible) return true;
             if ((ext == "jpeg" && cible == "jpg") || (ext == "jpg" && cible == "jpeg")) return true;
             if ((ext == "tif" && cible == "tiff") || (ext == "tiff" && cible == "tif")) return true;
+            if ((ext == "heic" && cible == "heif") || (ext == "heif" && cible == "heic")) return true;
             return false;
         }
 
@@ -150,6 +166,13 @@ namespace SkadooshConverter
             var local = Path.Combine(Path.Combine(appDir, "bin"), "ffmpeg.exe");
             if (File.Exists(local)) return local;
             return ChercherSurPath("ffmpeg.exe");
+        }
+
+        public static string TrouverMagick(string appDir)
+        {
+            var local = Path.Combine(Path.Combine(appDir, "bin"), "magick.exe");
+            if (File.Exists(local)) return local;
+            return ChercherSurPath("magick.exe");
         }
 
         private static string ChercherSurPath(string exe)
@@ -183,6 +206,55 @@ namespace SkadooshConverter
                     string.Format("{0} ({1}){2}", stem, n, ext));
                 if (!File.Exists(candidate)) return candidate;
                 n++;
+            }
+        }
+
+        // ------------------------------ images (ImageMagick)
+
+        public static void ConvertirImageMagick(string magick, string source,
+            string dest, string cible)
+        {
+            // Cibles que magick écrit directement ; pour ICO et PDF, on passe
+            // par un PNG temporaire puis par notre pipeline natif (icône 256,
+            // écrivain PDF maison), pour un rendu identique au reste.
+            if (cible == "ico" || cible == "pdf")
+            {
+                var tempPng = Path.Combine(Path.GetTempPath(),
+                    "skadoosh_" + Guid.NewGuid().ToString("N") + ".png");
+                try
+                {
+                    LancerMagick(magick, source, tempPng);
+                    using (var img = new Bitmap(tempPng))
+                    {
+                        if (cible == "ico") SauverIco(img, dest);
+                        else SauverPdf(img, dest);
+                    }
+                }
+                finally
+                {
+                    try { if (File.Exists(tempPng)) File.Delete(tempPng); } catch { }
+                }
+                return;
+            }
+            LancerMagick(magick, source, dest);
+        }
+
+        private static void LancerMagick(string magick, string source, string dest)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo();
+            psi.FileName = magick;
+            // [0] : ne garder que la première image (HEIC/AVIF multi-images).
+            psi.Arguments = "\"" + source + "[0]\" \"" + dest + "\"";
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.RedirectStandardError = true;
+            using (var proc = System.Diagnostics.Process.Start(psi))
+            {
+                var err = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+                if (proc.ExitCode != 0 || !File.Exists(dest))
+                    throw new Exception("ImageMagick a échoué" +
+                        (err.Trim().Length > 0 ? " : " + Premiereligne(err) : "."));
             }
         }
 
@@ -230,7 +302,7 @@ namespace SkadooshConverter
 
         // ICO : une entrée PNG 256x256 (l'image est réduite si besoin,
         // centrée sur fond transparent).
-        private static void SauverIco(Bitmap img, string dest)
+        public static void SauverIco(Bitmap img, string dest)
         {
             var side = 256;
             byte[] png;
@@ -264,7 +336,7 @@ namespace SkadooshConverter
 
         // PDF minimal : une page à la taille de l'image, qui embarque le
         // JPEG tel quel (filtre DCTDecode) - aucun composant externe.
-        private static void SauverPdf(Bitmap img, string dest)
+        public static void SauverPdf(Bitmap img, string dest)
         {
             byte[] jpeg;
             using (var flat = new Bitmap(img.Width, img.Height))
@@ -401,7 +473,7 @@ namespace SkadooshConverter
             _depsLabel.ForeColor = Theme.TexteDoux;
 
             _depsButton = new RoundedButton();
-            _depsButton.Text = "Installer FFmpeg (audio)";
+            _depsButton.Text = "Installer les dépendances";
             _depsButton.SetBounds(404, 14, 180, 32);
             Theme.StyleButton(_depsButton, false);
             _depsButton.Click += OnInstallDeps;
@@ -519,25 +591,27 @@ namespace SkadooshConverter
         private void MajDeps()
         {
             var ffmpeg = Conversions.TrouverFFmpeg(_appDir) != null;
-            _depsLabel.Text = "Images : natif ✔     Audio : FFmpeg " + (ffmpeg ? "✔" : "✖");
-            _depsLabel.ForeColor = ffmpeg ? Theme.Ok : Theme.TexteDoux;
-            _depsButton.Visible = !ffmpeg;
+            var magick = Conversions.TrouverMagick(_appDir) != null;
+            _depsLabel.Text = "Images : natif ✔  ·  HEIC/WebP/AVIF : ImageMagick " +
+                (magick ? "✔" : "✖") + "  ·  Audio : FFmpeg " + (ffmpeg ? "✔" : "✖");
+            _depsLabel.ForeColor = (ffmpeg && magick) ? Theme.Ok : Theme.TexteDoux;
+            _depsButton.Visible = !(ffmpeg && magick);
         }
 
-        // Installation de FFmpeg en arrière-plan, sans fenêtre de terminal :
-        // le script PowerShell tourne caché, le statut s'affiche ici.
+        // Installation des dépendances manquantes en arrière-plan, sans
+        // fenêtre de terminal : les scripts PowerShell tournent cachés, le
+        // statut s'affiche ici.
         private void OnInstallDeps(object sender, EventArgs e)
         {
             if (_depsWorker.IsBusy) return;
             _depsButton.Enabled = false;
-            _status.Text = "Téléchargement de FFmpeg en arrière-plan… (environ une minute)";
+            _status.Text = "Téléchargement des dépendances en arrière-plan… (une à deux minutes)";
             _status.ForeColor = Theme.Info;
             _depsWorker.RunWorkerAsync();
         }
 
-        private void DepsDoWork(object sender, DoWorkEventArgs e)
+        private static int LancerScript(string script)
         {
-            var script = Path.Combine(Path.Combine(_appDir, "scripts"), "install-ffmpeg.ps1");
             var psi = new System.Diagnostics.ProcessStartInfo();
             psi.FileName = "powershell.exe";
             psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"";
@@ -546,8 +620,19 @@ namespace SkadooshConverter
             using (var proc = System.Diagnostics.Process.Start(psi))
             {
                 proc.WaitForExit();
-                e.Result = proc.ExitCode;
+                return proc.ExitCode;
             }
+        }
+
+        private void DepsDoWork(object sender, DoWorkEventArgs e)
+        {
+            var scripts = Path.Combine(_appDir, "scripts");
+            var code = 0;
+            if (Conversions.TrouverFFmpeg(_appDir) == null)
+                code += LancerScript(Path.Combine(scripts, "install-ffmpeg.ps1"));
+            if (Conversions.TrouverMagick(_appDir) == null)
+                code += LancerScript(Path.Combine(scripts, "install-magick.ps1"));
+            e.Result = code;
         }
 
         private void DepsCompleted(object sender, RunWorkerCompletedEventArgs e)
@@ -555,15 +640,16 @@ namespace SkadooshConverter
             _depsButton.Enabled = true;
             MajDeps();
             var ok = e.Error == null && (int)e.Result == 0 &&
-                Conversions.TrouverFFmpeg(_appDir) != null;
+                Conversions.TrouverFFmpeg(_appDir) != null &&
+                Conversions.TrouverMagick(_appDir) != null;
             if (ok)
             {
-                _status.Text = "FFmpeg installé ! La conversion audio est prête.";
+                _status.Text = "Dépendances installées ! Tout est prêt.";
                 _status.ForeColor = Theme.Ok;
             }
             else
             {
-                _status.Text = "L'installation de FFmpeg a échoué (pas de connexion ?). Réessayez.";
+                _status.Text = "Installation incomplète (pas de connexion ?). Réessayez.";
                 _status.ForeColor = Theme.Erreur;
             }
         }
@@ -577,6 +663,7 @@ namespace SkadooshConverter
                 dlg.Title = "Choisissez les fichiers à convertir";
                 dlg.Multiselect = true;
                 dlg.Filter = "Tous les fichiers convertibles|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.ico;" +
+                    "*.heic;*.heif;*.webp;*.avif;" +
                     "*.mp3;*.wav;*.flac;*.ogg;*.oga;*.m4a;*.aac;*.wma;*.opus;*.aiff|Tous les fichiers|*.*";
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 var rejets = 0;
@@ -645,6 +732,7 @@ namespace SkadooshConverter
             public Categorie Cat;
             public string Cible;
             public string Ffmpeg;
+            public string Magick;
         }
 
         private class BatchResult
@@ -669,14 +757,29 @@ namespace SkadooshConverter
             args.Cat = _categorie;
             args.Cible = (string)_targetCombo.SelectedItem;
             args.Ffmpeg = Conversions.TrouverFFmpeg(_appDir);
+            args.Magick = Conversions.TrouverMagick(_appDir);
 
             if (args.Cat == Categorie.Audio && args.Ffmpeg == null)
             {
                 MessageBox.Show(this,
                     "La conversion audio a besoin de FFmpeg. Cliquez sur " +
-                    "« Installer FFmpeg (audio) » d'abord.",
+                    "« Installer les dépendances » d'abord.",
                     "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
+            }
+            if (args.Cat == Categorie.Images && args.Magick == null)
+            {
+                var besoin = false;
+                foreach (var f in args.Files)
+                    if (Conversions.NecessiteMagick(f, args.Cible)) { besoin = true; break; }
+                if (besoin)
+                {
+                    MessageBox.Show(this,
+                        "Les formats HEIC/HEIF/WebP/AVIF ont besoin d'ImageMagick. " +
+                        "Cliquez sur « Installer les dépendances » d'abord.",
+                        "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
             }
 
             SetBusy(true);
@@ -707,7 +810,12 @@ namespace SkadooshConverter
                         Path.GetFileNameWithoutExtension(source) + "." + args.Cible);
 
                     if (args.Cat == Categorie.Images)
-                        Conversions.ConvertirImage(source, dest, args.Cible);
+                    {
+                        if (Conversions.NecessiteMagick(source, args.Cible))
+                            Conversions.ConvertirImageMagick(args.Magick, source, dest, args.Cible);
+                        else
+                            Conversions.ConvertirImage(source, dest, args.Cible);
+                    }
                     else
                         Conversions.ConvertirAudio(args.Ffmpeg, source, dest);
 
