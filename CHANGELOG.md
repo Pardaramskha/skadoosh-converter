@@ -1,5 +1,14 @@
 # Changelog — Skadoosh converter
 
+## 1.1.0 — 2026-07-17
+
+- La conversion de documents (LibreOffice) est retirée : pas de solution
+  correcte sans installer une suite bureautique complète. Skadoosh se
+  concentre sur les images (natif) et l'audio (FFmpeg).
+- L'installation de FFmpeg se fait désormais **en arrière-plan, sans
+  fenêtre de terminal** : le statut s'affiche dans l'appli, le bouton
+  disparaît une fois FFmpeg présent.
+
 ## 1.0.0 — 2026-07-17
 
 Première version du convertisseur de fichiers.

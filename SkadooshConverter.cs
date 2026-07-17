@@ -11,9 +11,9 @@ using System.Text;
 using System.Windows.Forms;
 
 // Skadoosh converter - édition Windows (.NET Framework / WinForms)
-// Convertisseur de fichiers : images (natif GDI+, y compris ICO et PDF),
-// audio (via FFmpeg, installable d'un bouton) et documents (via LibreOffice
-// s'il est installé). Habillage sombre de la famille Stargazer.
+// Convertisseur de fichiers : images (natif GDI+, y compris ICO et PDF)
+// et audio (via FFmpeg, installé en arrière-plan d'un clic).
+// Habillage sombre de la famille Stargazer.
 // Style compatible C# 5 pour compiler avec le csc.exe intégré (aucun SDK requis).
 
 namespace SkadooshConverter
@@ -110,7 +110,7 @@ namespace SkadooshConverter
 
     // ------------------------------------------------- moteur de conversion
 
-    public enum Categorie { Aucune, Images, Audio, Documents }
+    public enum Categorie { Aucune, Images, Audio }
 
     public static class Conversions
     {
@@ -120,23 +120,17 @@ namespace SkadooshConverter
         public static readonly HashSet<string> ExtsAudio =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "wma", "opus", "aiff" };
-        public static readonly HashSet<string> ExtsDocuments =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "doc", "docx", "odt", "rtf", "txt", "html", "htm" };
 
         public static readonly string[] CiblesImages =
             new string[] { "png", "jpg", "bmp", "gif", "tiff", "ico", "pdf" };
         public static readonly string[] CiblesAudio =
             new string[] { "mp3", "wav", "flac", "ogg", "m4a", "opus" };
-        public static readonly string[] CiblesDocuments =
-            new string[] { "pdf", "docx", "odt", "rtf", "txt", "html" };
 
         public static Categorie CategorieDe(string path)
         {
             var ext = Path.GetExtension(path).TrimStart('.');
             if (ExtsImages.Contains(ext)) return Categorie.Images;
             if (ExtsAudio.Contains(ext)) return Categorie.Audio;
-            if (ExtsDocuments.Contains(ext)) return Categorie.Documents;
             return Categorie.Aucune;
         }
 
@@ -148,7 +142,6 @@ namespace SkadooshConverter
             if (ext == cible) return true;
             if ((ext == "jpeg" && cible == "jpg") || (ext == "jpg" && cible == "jpeg")) return true;
             if ((ext == "tif" && cible == "tiff") || (ext == "tiff" && cible == "tif")) return true;
-            if ((ext == "htm" && cible == "html") || (ext == "html" && cible == "htm")) return true;
             return false;
         }
 
@@ -157,18 +150,6 @@ namespace SkadooshConverter
             var local = Path.Combine(Path.Combine(appDir, "bin"), "ffmpeg.exe");
             if (File.Exists(local)) return local;
             return ChercherSurPath("ffmpeg.exe");
-        }
-
-        public static string TrouverSoffice()
-        {
-            var candidats = new string[]
-            {
-                Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\LibreOffice\program\soffice.exe"),
-                Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\LibreOffice\program\soffice.exe")
-            };
-            foreach (var c in candidats)
-                if (File.Exists(c)) return c;
-            return ChercherSurPath("soffice.exe");
         }
 
         private static string ChercherSurPath(string exe)
@@ -369,40 +350,6 @@ namespace SkadooshConverter
             }
         }
 
-        // ------------------------------ documents (LibreOffice)
-
-        public static void ConvertirDocument(string soffice, string source, string dest, string cible)
-        {
-            // LibreOffice impose le nom de sortie : on convertit dans un
-            // dossier temporaire puis on déplace vers la destination choisie.
-            var work = Path.Combine(Path.GetTempPath(),
-                "skadoosh_" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(work);
-            try
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo();
-                psi.FileName = soffice;
-                psi.Arguments = "--headless --convert-to " + cible +
-                    " --outdir \"" + work + "\" \"" + source + "\"";
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                using (var proc = System.Diagnostics.Process.Start(psi))
-                {
-                    proc.WaitForExit(120000);
-                    if (!proc.HasExited) { proc.Kill(); throw new Exception("LibreOffice ne répond pas."); }
-                }
-                var produit = Path.Combine(work,
-                    Path.GetFileNameWithoutExtension(source) + "." + cible);
-                if (!File.Exists(produit))
-                    throw new Exception("LibreOffice n'a pas produit le fichier attendu.");
-                File.Move(produit, dest);
-            }
-            finally
-            {
-                try { Directory.Delete(work, true); } catch { }
-            }
-        }
-
         private static string Premiereligne(string s)
         {
             var lines = s.Trim().Split('\n');
@@ -429,6 +376,7 @@ namespace SkadooshConverter
         private ProgressBar _progress;
         private Label _status;
         private BackgroundWorker _worker;
+        private BackgroundWorker _depsWorker;
 
         private readonly List<string> _files = new List<string>();
         private Categorie _categorie = Categorie.Aucune;
@@ -453,29 +401,17 @@ namespace SkadooshConverter
             _depsLabel.ForeColor = Theme.TexteDoux;
 
             _depsButton = new RoundedButton();
-            _depsButton.Text = "Installer les dépendances";
+            _depsButton.Text = "Installer FFmpeg (audio)";
             _depsButton.SetBounds(404, 14, 180, 32);
             Theme.StyleButton(_depsButton, false);
-            _depsButton.Click += delegate(object s, EventArgs e)
-            {
-                try
-                {
-                    System.Diagnostics.Process.Start(
-                        Path.Combine(Path.Combine(_appDir, "scripts"), "install-deps.bat"));
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(this, "Impossible de lancer l'installation : " + ex.Message,
-                        "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            };
+            _depsButton.Click += OnInstallDeps;
 
             var divider = new Label();
             divider.SetBounds(16, 58, 568, 1);
             divider.BackColor = Theme.Bordure;
 
             var filesLabel = new Label();
-            filesLabel.Text = "Fichiers à convertir (même famille : images, audio ou documents) :";
+            filesLabel.Text = "Fichiers à convertir (même famille : images ou audio) :";
             filesLabel.SetBounds(16, 70, 450, 20);
 
             _filesList = new ListBox();
@@ -556,6 +492,10 @@ namespace SkadooshConverter
             _worker.ProgressChanged += ConvertProgress;
             _worker.RunWorkerCompleted += ConvertCompleted;
 
+            _depsWorker = new BackgroundWorker();
+            _depsWorker.DoWork += DepsDoWork;
+            _depsWorker.RunWorkerCompleted += DepsCompleted;
+
             // Revérifier les dépendances quand la fenêtre reprend le focus
             // (ex. au retour de l'installeur).
             Activated += delegate(object s, EventArgs e) { MajDeps(); };
@@ -579,11 +519,53 @@ namespace SkadooshConverter
         private void MajDeps()
         {
             var ffmpeg = Conversions.TrouverFFmpeg(_appDir) != null;
-            var soffice = Conversions.TrouverSoffice() != null;
-            _depsLabel.Text =
-                "Images : natif ✔     Audio : FFmpeg " + (ffmpeg ? "✔" : "✖") +
-                "     Documents : LibreOffice " + (soffice ? "✔" : "✖");
-            _depsLabel.ForeColor = (ffmpeg && soffice) ? Theme.Ok : Theme.TexteDoux;
+            _depsLabel.Text = "Images : natif ✔     Audio : FFmpeg " + (ffmpeg ? "✔" : "✖");
+            _depsLabel.ForeColor = ffmpeg ? Theme.Ok : Theme.TexteDoux;
+            _depsButton.Visible = !ffmpeg;
+        }
+
+        // Installation de FFmpeg en arrière-plan, sans fenêtre de terminal :
+        // le script PowerShell tourne caché, le statut s'affiche ici.
+        private void OnInstallDeps(object sender, EventArgs e)
+        {
+            if (_depsWorker.IsBusy) return;
+            _depsButton.Enabled = false;
+            _status.Text = "Téléchargement de FFmpeg en arrière-plan… (environ une minute)";
+            _status.ForeColor = Theme.Info;
+            _depsWorker.RunWorkerAsync();
+        }
+
+        private void DepsDoWork(object sender, DoWorkEventArgs e)
+        {
+            var script = Path.Combine(Path.Combine(_appDir, "scripts"), "install-ffmpeg.ps1");
+            var psi = new System.Diagnostics.ProcessStartInfo();
+            psi.FileName = "powershell.exe";
+            psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"";
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            using (var proc = System.Diagnostics.Process.Start(psi))
+            {
+                proc.WaitForExit();
+                e.Result = proc.ExitCode;
+            }
+        }
+
+        private void DepsCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            _depsButton.Enabled = true;
+            MajDeps();
+            var ok = e.Error == null && (int)e.Result == 0 &&
+                Conversions.TrouverFFmpeg(_appDir) != null;
+            if (ok)
+            {
+                _status.Text = "FFmpeg installé ! La conversion audio est prête.";
+                _status.ForeColor = Theme.Ok;
+            }
+            else
+            {
+                _status.Text = "L'installation de FFmpeg a échoué (pas de connexion ?). Réessayez.";
+                _status.ForeColor = Theme.Erreur;
+            }
         }
 
         // ---------------------------------------------------------- fichiers
@@ -595,8 +577,7 @@ namespace SkadooshConverter
                 dlg.Title = "Choisissez les fichiers à convertir";
                 dlg.Multiselect = true;
                 dlg.Filter = "Tous les fichiers convertibles|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.ico;" +
-                    "*.mp3;*.wav;*.flac;*.ogg;*.oga;*.m4a;*.aac;*.wma;*.opus;*.aiff;" +
-                    "*.doc;*.docx;*.odt;*.rtf;*.txt;*.html;*.htm|Tous les fichiers|*.*";
+                    "*.mp3;*.wav;*.flac;*.ogg;*.oga;*.m4a;*.aac;*.wma;*.opus;*.aiff|Tous les fichiers|*.*";
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 var rejets = 0;
                 foreach (var f in dlg.FileNames)
@@ -606,7 +587,7 @@ namespace SkadooshConverter
                 {
                     MessageBox.Show(this,
                         rejets + " fichier(s) ignoré(s) : tous les fichiers d'un lot doivent " +
-                        "appartenir à la même famille (images, audio ou documents).",
+                        "appartenir à la même famille (images ou audio).",
                         "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
             }
@@ -641,7 +622,6 @@ namespace SkadooshConverter
             string nom = "aucun fichier";
             if (_categorie == Categorie.Images) { cibles = Conversions.CiblesImages; nom = "Images"; }
             else if (_categorie == Categorie.Audio) { cibles = Conversions.CiblesAudio; nom = "Audio"; }
-            else if (_categorie == Categorie.Documents) { cibles = Conversions.CiblesDocuments; nom = "Documents"; }
 
             _categoryLabel.Text = "Famille détectée : " + nom +
                 (_files.Count > 0 ? "  (" + _files.Count + " fichier(s))" : "");
@@ -665,7 +645,6 @@ namespace SkadooshConverter
             public Categorie Cat;
             public string Cible;
             public string Ffmpeg;
-            public string Soffice;
         }
 
         private class BatchResult
@@ -690,21 +669,12 @@ namespace SkadooshConverter
             args.Cat = _categorie;
             args.Cible = (string)_targetCombo.SelectedItem;
             args.Ffmpeg = Conversions.TrouverFFmpeg(_appDir);
-            args.Soffice = Conversions.TrouverSoffice();
 
             if (args.Cat == Categorie.Audio && args.Ffmpeg == null)
             {
                 MessageBox.Show(this,
                     "La conversion audio a besoin de FFmpeg. Cliquez sur " +
-                    "« Installer les dépendances » d'abord.",
-                    "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            if (args.Cat == Categorie.Documents && args.Soffice == null)
-            {
-                MessageBox.Show(this,
-                    "La conversion de documents a besoin de LibreOffice (gratuit). " +
-                    "Installez-le depuis fr.libreoffice.org puis revenez ici.",
+                    "« Installer FFmpeg (audio) » d'abord.",
                     "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -738,10 +708,8 @@ namespace SkadooshConverter
 
                     if (args.Cat == Categorie.Images)
                         Conversions.ConvertirImage(source, dest, args.Cible);
-                    else if (args.Cat == Categorie.Audio)
-                        Conversions.ConvertirAudio(args.Ffmpeg, source, dest);
                     else
-                        Conversions.ConvertirDocument(args.Soffice, source, dest, args.Cible);
+                        Conversions.ConvertirAudio(args.Ffmpeg, source, dest);
 
                     result.Converted++;
                 }
