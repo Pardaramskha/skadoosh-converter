@@ -1,5 +1,19 @@
 # Changelog — Skadoosh converter
 
+## 1.3.0 — 2026-07-18
+
+- **Installation d'ImageMagick réparée.** L'index officiel
+  `imagemagick.org/archive/binaries/` a disparu (404) et les archives
+  portables n'existent plus qu'en `.7z` : le script télécharge désormais
+  la dernière release GitHub officielle (`portable-Q16-x64.7z`), vérifie
+  son **empreinte SHA-256** (fournie par l'API GitHub) et l'extrait avec
+  le `tar.exe` intégré à Windows 10+. Toujours portable, toujours sans
+  toucher au système.
+- **Fini l'échec muet.** Toute la sortie des scripts d'installation est
+  consignée dans `logs\install.log` ; en cas d'échec, un dialogue montre
+  les dernières lignes du journal et propose de l'ouvrir (le patron
+  « Voir le journal » de la famille).
+
 ## 1.2.0 — 2026-07-17
 
 - **Formats modernes via ImageMagick** : HEIC/HEIF (photos iPhone), WebP

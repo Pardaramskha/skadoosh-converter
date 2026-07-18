@@ -610,16 +610,38 @@ namespace SkadooshConverter
             _depsWorker.RunWorkerAsync();
         }
 
-        private static int LancerScript(string script)
+        private string CheminJournalInstall
+        {
+            get { return Path.Combine(Path.Combine(_appDir, "logs"), "install.log"); }
+        }
+
+        // Lance un script d'installation caché et consigne TOUTE sa sortie
+        // dans logs\install.log : les terminaux cachés sont la règle de la
+        // famille, l'échec muet n'a plus le droit de l'être.
+        private int LancerScript(string script)
         {
             var psi = new System.Diagnostics.ProcessStartInfo();
             psi.FileName = "powershell.exe";
             psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"";
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
             using (var proc = System.Diagnostics.Process.Start(psi))
             {
+                var sortie = proc.StandardOutput.ReadToEnd() +
+                             proc.StandardError.ReadToEnd();
                 proc.WaitForExit();
+                try
+                {
+                    var dir = Path.GetDirectoryName(CheminJournalInstall);
+                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    File.AppendAllText(CheminJournalInstall,
+                        "=== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " +
+                        Path.GetFileName(script) + " — code " + proc.ExitCode +
+                        " ===\r\n" + sortie + "\r\n");
+                }
+                catch { /* le journal ne doit pas faire échouer l'installation */ }
                 return proc.ExitCode;
             }
         }
@@ -649,8 +671,35 @@ namespace SkadooshConverter
             }
             else
             {
-                _status.Text = "Installation incomplète (pas de connexion ?). Réessayez.";
+                _status.Text = "Installation incomplète — détails dans logs\\install.log.";
                 _status.ForeColor = Theme.Erreur;
+
+                // « Voir le journal » : montrer pourquoi, pas juste que ça a raté.
+                var extrait = "";
+                try
+                {
+                    var lignes = File.ReadAllLines(CheminJournalInstall);
+                    var debut = Math.Max(0, lignes.Length - 12);
+                    extrait = string.Join("\n", lignes, debut, lignes.Length - debut).Trim();
+                }
+                catch { }
+                var rep = MessageBox.Show(this,
+                    "L'installation des dépendances a échoué.\n\n" +
+                    (extrait.Length > 0
+                        ? "Dernières lignes du journal :\n\n" + extrait + "\n\n"
+                        : "") +
+                    "Ouvrir le journal complet ?\n" + CheminJournalInstall,
+                    "Skadoosh converter", MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (rep == DialogResult.Yes)
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start("notepad.exe",
+                            "\"" + CheminJournalInstall + "\"");
+                    }
+                    catch { }
+                }
             }
         }
 
