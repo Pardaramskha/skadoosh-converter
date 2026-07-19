@@ -498,6 +498,172 @@ namespace SkadooshConverter
         }
     }
 
+    // ----------------------------------- installation automatique des moteurs
+    // Un moteur manque ? Cette fenêtre s'ouvre au lancement et le télécharge
+    // directement — aucune question posée, ça ne se produit qu'une fois.
+    // « Continuer en arrière-plan » rend la main pendant le téléchargement.
+
+    public class FenetreInstallation : Form
+    {
+        private class Dep
+        {
+            public string Nom;
+            public string Script;
+            public Label Ligne;
+            public int Etat;   // 0 en attente, 1 en cours, 2 ok, 3 échec
+        }
+
+        private readonly List<Dep> _deps = new List<Dep>();
+        private readonly string _appDir;
+        private readonly BackgroundWorker _worker;
+        private readonly ProgressBar _barre;
+        private readonly RoundedButton _bouton;
+        private readonly Label _intro;
+        private bool _lance;
+
+        // deps : paires { nom lisible, chemin du script d'installation }.
+        public FenetreInstallation(string appDir, List<string[]> deps)
+        {
+            _appDir = appDir;
+            Text = "Premiers préparatifs";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false; MinimizeBox = false;
+            ControlBox = false;
+            ClientSize = new Size(460, 168 + deps.Count * 26);
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Theme.Nuit; ForeColor = Theme.Texte;
+            Font = new Font("Segoe UI", 9f);
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch { }
+
+            _intro = new Label();
+            _intro.Text = "Un moteur manque : téléchargement en cours, rien à " +
+                "faire de votre côté. Une fois suffit — les prochains " +
+                "lancements seront directs.";
+            _intro.ForeColor = Theme.TexteDoux;
+            _intro.SetBounds(20, 14, 420, 40);
+
+            var y = 62;
+            foreach (var d in deps)
+            {
+                var dep = new Dep();
+                dep.Nom = d[0];
+                dep.Script = d[1];
+                dep.Ligne = new Label();
+                dep.Ligne.Text = "…  " + dep.Nom;
+                dep.Ligne.ForeColor = Theme.TexteDoux;
+                dep.Ligne.SetBounds(28, y, 412, 22);
+                Controls.Add(dep.Ligne);
+                _deps.Add(dep);
+                y += 26;
+            }
+
+            _barre = new ProgressBar();
+            _barre.SetBounds(20, y + 8, 420, 8);
+            _barre.Style = ProgressBarStyle.Marquee;
+
+            _bouton = new RoundedButton();
+            _bouton.Text = "Continuer en arrière-plan";
+            _bouton.SetBounds(250, y + 30, 190, 30);
+            Theme.StyleButton(_bouton, false);
+            _bouton.Click += delegate(object s, EventArgs e) { Close(); };
+
+            Controls.Add(_intro);
+            Controls.Add(_barre);
+            Controls.Add(_bouton);
+
+            _worker = new BackgroundWorker();
+            _worker.WorkerReportsProgress = true;
+            _worker.DoWork += Travailler;
+            _worker.ProgressChanged += Avancer;
+            _worker.RunWorkerCompleted += Terminer;
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            if (_lance) return;
+            _lance = true;
+            _worker.RunWorkerAsync();
+        }
+
+        private void Travailler(object sender, DoWorkEventArgs e)
+        {
+            for (var i = 0; i < _deps.Count; i++)
+            {
+                _worker.ReportProgress(i, 1);
+                var code = LancerScript(_deps[i].Script);
+                _worker.ReportProgress(i, code == 0 ? 2 : 3);
+            }
+        }
+
+        private void Avancer(object sender, ProgressChangedEventArgs e)
+        {
+            if (IsDisposed) return;
+            var dep = _deps[e.ProgressPercentage];
+            dep.Etat = (int)e.UserState;
+            switch (dep.Etat)
+            {
+                case 1:
+                    dep.Ligne.Text = "⏳  " + dep.Nom + " — téléchargement…";
+                    dep.Ligne.ForeColor = Theme.Info;
+                    break;
+                case 2:
+                    dep.Ligne.Text = "✔  " + dep.Nom;
+                    dep.Ligne.ForeColor = Theme.Ok;
+                    break;
+                default:
+                    dep.Ligne.Text = "✖  " + dep.Nom + " — échec (connexion ?)";
+                    dep.Ligne.ForeColor = Theme.Erreur;
+                    break;
+            }
+        }
+
+        private void Terminer(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (IsDisposed) return;
+            var toutBon = true;
+            foreach (var d in _deps) if (d.Etat != 2) toutBon = false;
+            if (toutBon) { DialogResult = DialogResult.OK; Close(); return; }
+            _intro.Text = "Une installation a échoué — vérifiez la connexion. " +
+                "Les détails sont dans logs\\install.log ; l'application " +
+                "retentera au prochain lancement.";
+            _intro.ForeColor = Theme.Erreur;
+            _barre.Visible = false;
+            _bouton.Text = "Continuer quand même";
+        }
+
+        // Script PowerShell caché, toute la sortie journalisée dans
+        // logs\install.log (l'échec muet n'a pas le droit d'exister).
+        private int LancerScript(string script)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo();
+            psi.FileName = "powershell.exe";
+            psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"";
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            using (var proc = System.Diagnostics.Process.Start(psi))
+            {
+                var sortie = proc.StandardOutput.ReadToEnd() +
+                             proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+                try
+                {
+                    var dir = Path.Combine(_appDir, "logs");
+                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    File.AppendAllText(Path.Combine(dir, "install.log"),
+                        "=== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " +
+                        Path.GetFileName(script) + " — code " + proc.ExitCode +
+                        " ===\r\n" + sortie + "\r\n");
+                }
+                catch { }
+                return proc.ExitCode;
+            }
+        }
+    }
+
     // ------------------------------------------------------------ fenêtre
 
     public class MainForm : Form
@@ -506,8 +672,6 @@ namespace SkadooshConverter
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr,
             ref int value, int size);
 
-        private Label _depsLabel;
-        private RoundedButton _depsButton;
         private ListBox _filesList;
         private RoundedButton _addButton;
         private RoundedButton _clearButton;
@@ -517,7 +681,6 @@ namespace SkadooshConverter
         private ProgressBar _progress;
         private Label _status;
         private BackgroundWorker _worker;
-        private BackgroundWorker _depsWorker;
 
         private readonly List<string> _files = new List<string>();
         private Categorie _categorie = Categorie.Aucune;
@@ -537,15 +700,15 @@ namespace SkadooshConverter
             catch { }
             _appDir = Path.GetDirectoryName(Application.ExecutablePath);
 
-            _depsLabel = new Label();
-            _depsLabel.SetBounds(16, 16, 380, 34);
-            _depsLabel.ForeColor = Theme.TexteDoux;
-
-            _depsButton = new RoundedButton();
-            _depsButton.Text = "Installer les dépendances";
-            _depsButton.SetBounds(404, 14, 180, 32);
-            Theme.StyleButton(_depsButton, false);
-            _depsButton.Click += OnInstallDeps;
+            // Les moteurs (FFmpeg, ImageMagick, Pandoc) s'installent tout
+            // seuls au lancement quand ils manquent : plus d'étiquette
+            // d'état ni de bouton — juste la promesse de la maison.
+            var intro = new Label();
+            intro.Text = "Images, audio et textes — déposez, choisissez un " +
+                "format, skadoosh. Les moteurs se téléchargent tout seuls " +
+                "au premier besoin.";
+            intro.SetBounds(16, 12, 568, 36);
+            intro.ForeColor = Theme.TexteDoux;
 
             var divider = new Label();
             divider.SetBounds(16, 58, 568, 1);
@@ -612,8 +775,7 @@ namespace SkadooshConverter
             hint.SetBounds(16, 424, 568, 20);
             hint.ForeColor = Theme.TexteDoux;
 
-            Controls.Add(_depsLabel);
-            Controls.Add(_depsButton);
+            Controls.Add(intro);
             Controls.Add(divider);
             Controls.Add(filesLabel);
             Controls.Add(_filesList);
@@ -633,14 +795,6 @@ namespace SkadooshConverter
             _worker.ProgressChanged += ConvertProgress;
             _worker.RunWorkerCompleted += ConvertCompleted;
 
-            _depsWorker = new BackgroundWorker();
-            _depsWorker.DoWork += DepsDoWork;
-            _depsWorker.RunWorkerCompleted += DepsCompleted;
-
-            // Revérifier les dépendances quand la fenêtre reprend le focus
-            // (ex. au retour de l'installeur).
-            Activated += delegate(object s, EventArgs e) { MajDeps(); };
-            MajDeps();
             MajCategorie();
 
             if (initialFiles != null)
@@ -656,125 +810,37 @@ namespace SkadooshConverter
         }
 
         // ------------------------------------------------------- dépendances
+        // Plus de bouton ni d'étiquette d'état : ce qui manque se télécharge
+        // tout seul au lancement (FenetreInstallation), et un dernier filet
+        // au moment de convertir couvre le cas « installé plus tard ».
 
-        private void MajDeps()
+        private bool _installationFaite;
+
+        protected override void OnShown(EventArgs e)
         {
-            var ffmpeg = Conversions.TrouverFFmpeg(_appDir) != null;
-            var magick = Conversions.TrouverMagick(_appDir) != null;
-            var pandoc = Conversions.TrouverPandoc(_appDir) != null;
-            _depsLabel.Text = "Images : natif ✔  ·  ImageMagick " +
-                (magick ? "✔" : "✖") + "  ·  FFmpeg " + (ffmpeg ? "✔" : "✖") +
-                "  ·  Textes : Pandoc " + (pandoc ? "✔" : "✖");
-            _depsLabel.ForeColor = (ffmpeg && magick && pandoc) ? Theme.Ok : Theme.TexteDoux;
-            _depsButton.Visible = !(ffmpeg && magick && pandoc);
+            base.OnShown(e);
+            if (_installationFaite) return;
+            _installationFaite = true;
+            InstallerManquantes();
         }
 
-        // Installation des dépendances manquantes en arrière-plan, sans
-        // fenêtre de terminal : les scripts PowerShell tournent cachés, le
-        // statut s'affiche ici.
-        private void OnInstallDeps(object sender, EventArgs e)
-        {
-            if (_depsWorker.IsBusy) return;
-            _depsButton.Enabled = false;
-            _status.Text = "Téléchargement des dépendances en arrière-plan… (une à deux minutes)";
-            _status.ForeColor = Theme.Info;
-            _depsWorker.RunWorkerAsync();
-        }
-
-        private string CheminJournalInstall
-        {
-            get { return Path.Combine(Path.Combine(_appDir, "logs"), "install.log"); }
-        }
-
-        // Lance un script d'installation caché et consigne TOUTE sa sortie
-        // dans logs\install.log : les terminaux cachés sont la règle de la
-        // famille, l'échec muet n'a plus le droit de l'être.
-        private int LancerScript(string script)
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo();
-            psi.FileName = "powershell.exe";
-            psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"";
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            using (var proc = System.Diagnostics.Process.Start(psi))
-            {
-                var sortie = proc.StandardOutput.ReadToEnd() +
-                             proc.StandardError.ReadToEnd();
-                proc.WaitForExit();
-                try
-                {
-                    var dir = Path.GetDirectoryName(CheminJournalInstall);
-                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                    File.AppendAllText(CheminJournalInstall,
-                        "=== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " +
-                        Path.GetFileName(script) + " — code " + proc.ExitCode +
-                        " ===\r\n" + sortie + "\r\n");
-                }
-                catch { /* le journal ne doit pas faire échouer l'installation */ }
-                return proc.ExitCode;
-            }
-        }
-
-        private void DepsDoWork(object sender, DoWorkEventArgs e)
+        // Ouvre la fenêtre d'installation pour tout moteur absent.
+        private void InstallerManquantes()
         {
             var scripts = Path.Combine(_appDir, "scripts");
-            var code = 0;
+            var deps = new List<string[]>();
             if (Conversions.TrouverFFmpeg(_appDir) == null)
-                code += LancerScript(Path.Combine(scripts, "install-ffmpeg.ps1"));
+                deps.Add(new string[] { "FFmpeg (audio)",
+                    Path.Combine(scripts, "install-ffmpeg.ps1") });
             if (Conversions.TrouverMagick(_appDir) == null)
-                code += LancerScript(Path.Combine(scripts, "install-magick.ps1"));
+                deps.Add(new string[] { "ImageMagick (HEIC, WebP, AVIF)",
+                    Path.Combine(scripts, "install-magick.ps1") });
             if (Conversions.TrouverPandoc(_appDir) == null)
-                code += LancerScript(Path.Combine(scripts, "install-pandoc.ps1"));
-            e.Result = code;
-        }
-
-        private void DepsCompleted(object sender, RunWorkerCompletedEventArgs e)
-        {
-            _depsButton.Enabled = true;
-            MajDeps();
-            var ok = e.Error == null && (int)e.Result == 0 &&
-                Conversions.TrouverFFmpeg(_appDir) != null &&
-                Conversions.TrouverMagick(_appDir) != null &&
-                Conversions.TrouverPandoc(_appDir) != null;
-            if (ok)
-            {
-                _status.Text = "Dépendances installées ! Tout est prêt.";
-                _status.ForeColor = Theme.Ok;
-            }
-            else
-            {
-                _status.Text = "Installation incomplète — détails dans logs\\install.log.";
-                _status.ForeColor = Theme.Erreur;
-
-                // « Voir le journal » : montrer pourquoi, pas juste que ça a raté.
-                var extrait = "";
-                try
-                {
-                    var lignes = File.ReadAllLines(CheminJournalInstall);
-                    var debut = Math.Max(0, lignes.Length - 12);
-                    extrait = string.Join("\n", lignes, debut, lignes.Length - debut).Trim();
-                }
-                catch { }
-                var rep = MessageBox.Show(this,
-                    "L'installation des dépendances a échoué.\n\n" +
-                    (extrait.Length > 0
-                        ? "Dernières lignes du journal :\n\n" + extrait + "\n\n"
-                        : "") +
-                    "Ouvrir le journal complet ?\n" + CheminJournalInstall,
-                    "Skadoosh converter", MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-                if (rep == DialogResult.Yes)
-                {
-                    try
-                    {
-                        System.Diagnostics.Process.Start("notepad.exe",
-                            "\"" + CheminJournalInstall + "\"");
-                    }
-                    catch { }
-                }
-            }
+                deps.Add(new string[] { "Pandoc (textes)",
+                    Path.Combine(scripts, "install-pandoc.ps1") });
+            if (deps.Count == 0) return;
+            using (var dlg = new FenetreInstallation(_appDir, deps))
+                dlg.ShowDialog(this);
         }
 
         // ---------------------------------------------------------- fichiers
@@ -886,33 +952,28 @@ namespace SkadooshConverter
             args.Magick = Conversions.TrouverMagick(_appDir);
             args.Pandoc = Conversions.TrouverPandoc(_appDir);
 
-            if (args.Cat == Categorie.Texte && args.Pandoc == null)
-            {
-                MessageBox.Show(this,
-                    "La conversion de textes a besoin de Pandoc. Cliquez sur " +
-                    "« Installer les dépendances » d'abord.",
-                    "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            if (args.Cat == Categorie.Audio && args.Ffmpeg == null)
-            {
-                MessageBox.Show(this,
-                    "La conversion audio a besoin de FFmpeg. Cliquez sur " +
-                    "« Installer les dépendances » d'abord.",
-                    "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
+            // Dernier filet : un moteur manque encore (installation sautée ou
+            // ratée au lancement) ? On le télécharge maintenant, directement.
+            var besoinMagick = false;
             if (args.Cat == Categorie.Images && args.Magick == null)
-            {
-                var besoin = false;
                 foreach (var f in args.Files)
-                    if (Conversions.NecessiteMagick(f, args.Cible)) { besoin = true; break; }
-                if (besoin)
+                    if (Conversions.NecessiteMagick(f, args.Cible)) { besoinMagick = true; break; }
+            if ((args.Cat == Categorie.Texte && args.Pandoc == null) ||
+                (args.Cat == Categorie.Audio && args.Ffmpeg == null) || besoinMagick)
+            {
+                InstallerManquantes();
+                args.Ffmpeg = Conversions.TrouverFFmpeg(_appDir);
+                args.Magick = Conversions.TrouverMagick(_appDir);
+                args.Pandoc = Conversions.TrouverPandoc(_appDir);
+                var toujoursAbsent =
+                    (args.Cat == Categorie.Texte && args.Pandoc == null) ||
+                    (args.Cat == Categorie.Audio && args.Ffmpeg == null) ||
+                    (besoinMagick && args.Magick == null);
+                if (toujoursAbsent)
                 {
-                    MessageBox.Show(this,
-                        "Les formats HEIC/HEIF/WebP/AVIF ont besoin d'ImageMagick. " +
-                        "Cliquez sur « Installer les dépendances » d'abord.",
-                        "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    _status.Text = "Le moteur n'a pas pu être installé (connexion ?) " +
+                        "— détails dans logs\\install.log.";
+                    _status.ForeColor = Theme.Erreur;
                     return;
                 }
             }
@@ -1001,7 +1062,6 @@ namespace SkadooshConverter
             _clearButton.Enabled = !busy;
             _targetCombo.Enabled = !busy && _targetCombo.Items.Count > 0;
             _convertButton.Enabled = !busy;
-            _depsButton.Enabled = !busy;
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         }
 

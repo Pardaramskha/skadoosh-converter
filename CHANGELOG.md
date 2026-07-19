@@ -1,5 +1,15 @@
 # Changelog — Skadoosh converter
 
+## 1.6.0 — 2026-07-19
+
+- **Les moteurs s'installent tout seuls.** FFmpeg, ImageMagick et Pandoc
+  manquants se téléchargent automatiquement à l'ouverture, via une
+  petite fenêtre « Premiers préparatifs » (progression par moteur,
+  « Continuer en arrière-plan » pour ne pas attendre) — aucune question
+  posée, une fois suffit. Le bouton « Installer les dépendances » et
+  l'étiquette d'état disparaissent. Dernier filet au moment de
+  convertir si un moteur manque encore.
+
 ## 1.5.0 — 2026-07-19
 
 - **Nouvelle famille : Textes (Pandoc).** Déposez des `.docx`, `.odt`,
