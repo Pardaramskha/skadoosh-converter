@@ -110,7 +110,7 @@ namespace SkadooshConverter
 
     // ------------------------------------------------- moteur de conversion
 
-    public enum Categorie { Aucune, Images, Audio }
+    public enum Categorie { Aucune, Images, Audio, Texte }
 
     public static class Conversions
     {
@@ -125,11 +125,18 @@ namespace SkadooshConverter
         public static readonly HashSet<string> ExtsAudio =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "wma", "opus", "aiff" };
+        // Formats texte : convertis par Pandoc (le yt-dlp du texte —
+        // codename « Passe-partout » devenu la famille Textes de Skadoosh).
+        public static readonly HashSet<string> ExtsTexte =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "docx", "odt", "md", "markdown", "rtf", "html", "htm", "epub", "txt", "tex", "rst" };
 
         public static readonly string[] CiblesImages =
             new string[] { "png", "jpg", "webp", "bmp", "gif", "tiff", "ico", "pdf" };
         public static readonly string[] CiblesAudio =
             new string[] { "mp3", "wav", "flac", "ogg", "m4a", "opus" };
+        public static readonly string[] CiblesTexte =
+            new string[] { "docx", "odt", "md", "rtf", "html", "epub", "txt" };
 
         public static Categorie CategorieDe(string path)
         {
@@ -137,6 +144,7 @@ namespace SkadooshConverter
             if (ExtsImages.Contains(ext) || ExtsImagesMagick.Contains(ext))
                 return Categorie.Images;
             if (ExtsAudio.Contains(ext)) return Categorie.Audio;
+            if (ExtsTexte.Contains(ext)) return Categorie.Texte;
             return Categorie.Aucune;
         }
 
@@ -158,6 +166,8 @@ namespace SkadooshConverter
             if ((ext == "jpeg" && cible == "jpg") || (ext == "jpg" && cible == "jpeg")) return true;
             if ((ext == "tif" && cible == "tiff") || (ext == "tiff" && cible == "tif")) return true;
             if ((ext == "heic" && cible == "heif") || (ext == "heif" && cible == "heic")) return true;
+            if ((ext == "markdown" && cible == "md") || (ext == "md" && cible == "markdown")) return true;
+            if ((ext == "htm" && cible == "html") || (ext == "html" && cible == "htm")) return true;
             return false;
         }
 
@@ -196,6 +206,11 @@ namespace SkadooshConverter
         public static string TrouverMagick(string appDir)
         {
             return TrouverOutil(appDir, "magick.exe");
+        }
+
+        public static string TrouverPandoc(string appDir)
+        {
+            return TrouverOutil(appDir, "pandoc.exe");
         }
 
         private static string ChercherSurPath(string exe)
@@ -445,6 +460,37 @@ namespace SkadooshConverter
             }
         }
 
+        // ------------------------------ textes (Pandoc)
+
+        public static void ConvertirTexte(string pandoc, string source,
+            string dest, string cible)
+        {
+            // pandoc déduit le format d'entrée de l'extension ; deux
+            // exceptions : .txt (traité comme markdown) et la sortie .txt
+            // (format « plain »). --standalone produit des documents complets.
+            var sortie = cible == "txt" ? "plain"
+                : (cible == "md" ? "markdown" : cible);
+            var entree = "";
+            var extSource = Path.GetExtension(source).TrimStart('.').ToLowerInvariant();
+            if (extSource == "txt") entree = "-f markdown ";
+
+            var psi = new System.Diagnostics.ProcessStartInfo();
+            psi.FileName = pandoc;
+            psi.Arguments = "--standalone " + entree + "-t " + sortie +
+                " -o \"" + dest + "\" \"" + source + "\"";
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.RedirectStandardError = true;
+            using (var proc = System.Diagnostics.Process.Start(psi))
+            {
+                var err = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+                if (proc.ExitCode != 0 || !File.Exists(dest))
+                    throw new Exception("Pandoc a échoué" +
+                        (err.Trim().Length > 0 ? " : " + Premiereligne(err) : "."));
+            }
+        }
+
         private static string Premiereligne(string s)
         {
             var lines = s.Trim().Split('\n');
@@ -506,7 +552,7 @@ namespace SkadooshConverter
             divider.BackColor = Theme.Bordure;
 
             var filesLabel = new Label();
-            filesLabel.Text = "Fichiers à convertir (même famille : images ou audio) :";
+            filesLabel.Text = "Fichiers à convertir (même famille : images, audio ou textes) :";
             filesLabel.SetBounds(16, 70, 450, 20);
 
             _filesList = new ListBox();
@@ -615,10 +661,12 @@ namespace SkadooshConverter
         {
             var ffmpeg = Conversions.TrouverFFmpeg(_appDir) != null;
             var magick = Conversions.TrouverMagick(_appDir) != null;
-            _depsLabel.Text = "Images : natif ✔  ·  HEIC/WebP/AVIF : ImageMagick " +
-                (magick ? "✔" : "✖") + "  ·  Audio : FFmpeg " + (ffmpeg ? "✔" : "✖");
-            _depsLabel.ForeColor = (ffmpeg && magick) ? Theme.Ok : Theme.TexteDoux;
-            _depsButton.Visible = !(ffmpeg && magick);
+            var pandoc = Conversions.TrouverPandoc(_appDir) != null;
+            _depsLabel.Text = "Images : natif ✔  ·  ImageMagick " +
+                (magick ? "✔" : "✖") + "  ·  FFmpeg " + (ffmpeg ? "✔" : "✖") +
+                "  ·  Textes : Pandoc " + (pandoc ? "✔" : "✖");
+            _depsLabel.ForeColor = (ffmpeg && magick && pandoc) ? Theme.Ok : Theme.TexteDoux;
+            _depsButton.Visible = !(ffmpeg && magick && pandoc);
         }
 
         // Installation des dépendances manquantes en arrière-plan, sans
@@ -677,6 +725,8 @@ namespace SkadooshConverter
                 code += LancerScript(Path.Combine(scripts, "install-ffmpeg.ps1"));
             if (Conversions.TrouverMagick(_appDir) == null)
                 code += LancerScript(Path.Combine(scripts, "install-magick.ps1"));
+            if (Conversions.TrouverPandoc(_appDir) == null)
+                code += LancerScript(Path.Combine(scripts, "install-pandoc.ps1"));
             e.Result = code;
         }
 
@@ -686,7 +736,8 @@ namespace SkadooshConverter
             MajDeps();
             var ok = e.Error == null && (int)e.Result == 0 &&
                 Conversions.TrouverFFmpeg(_appDir) != null &&
-                Conversions.TrouverMagick(_appDir) != null;
+                Conversions.TrouverMagick(_appDir) != null &&
+                Conversions.TrouverPandoc(_appDir) != null;
             if (ok)
             {
                 _status.Text = "Dépendances installées ! Tout est prêt.";
@@ -736,7 +787,8 @@ namespace SkadooshConverter
                 dlg.Multiselect = true;
                 dlg.Filter = "Tous les fichiers convertibles|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.ico;" +
                     "*.heic;*.heif;*.webp;*.avif;" +
-                    "*.mp3;*.wav;*.flac;*.ogg;*.oga;*.m4a;*.aac;*.wma;*.opus;*.aiff|Tous les fichiers|*.*";
+                    "*.mp3;*.wav;*.flac;*.ogg;*.oga;*.m4a;*.aac;*.wma;*.opus;*.aiff;" +
+                    "*.docx;*.odt;*.md;*.markdown;*.rtf;*.html;*.htm;*.epub;*.txt;*.tex;*.rst|Tous les fichiers|*.*";
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 var rejets = 0;
                 foreach (var f in dlg.FileNames)
@@ -746,7 +798,7 @@ namespace SkadooshConverter
                 {
                     MessageBox.Show(this,
                         rejets + " fichier(s) ignoré(s) : tous les fichiers d'un lot doivent " +
-                        "appartenir à la même famille (images ou audio).",
+                        "appartenir à la même famille (images, audio ou textes).",
                         "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
             }
@@ -781,6 +833,7 @@ namespace SkadooshConverter
             string nom = "aucun fichier";
             if (_categorie == Categorie.Images) { cibles = Conversions.CiblesImages; nom = "Images"; }
             else if (_categorie == Categorie.Audio) { cibles = Conversions.CiblesAudio; nom = "Audio"; }
+            else if (_categorie == Categorie.Texte) { cibles = Conversions.CiblesTexte; nom = "Textes (Pandoc)"; }
 
             _categoryLabel.Text = "Famille détectée : " + nom +
                 (_files.Count > 0 ? "  (" + _files.Count + " fichier(s))" : "");
@@ -805,6 +858,7 @@ namespace SkadooshConverter
             public string Cible;
             public string Ffmpeg;
             public string Magick;
+            public string Pandoc;
         }
 
         private class BatchResult
@@ -830,7 +884,16 @@ namespace SkadooshConverter
             args.Cible = (string)_targetCombo.SelectedItem;
             args.Ffmpeg = Conversions.TrouverFFmpeg(_appDir);
             args.Magick = Conversions.TrouverMagick(_appDir);
+            args.Pandoc = Conversions.TrouverPandoc(_appDir);
 
+            if (args.Cat == Categorie.Texte && args.Pandoc == null)
+            {
+                MessageBox.Show(this,
+                    "La conversion de textes a besoin de Pandoc. Cliquez sur " +
+                    "« Installer les dépendances » d'abord.",
+                    "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
             if (args.Cat == Categorie.Audio && args.Ffmpeg == null)
             {
                 MessageBox.Show(this,
@@ -888,6 +951,8 @@ namespace SkadooshConverter
                         else
                             Conversions.ConvertirImage(source, dest, args.Cible);
                     }
+                    else if (args.Cat == Categorie.Texte)
+                        Conversions.ConvertirTexte(args.Pandoc, source, dest, args.Cible);
                     else
                         Conversions.ConvertirAudio(args.Ffmpeg, source, dest);
 

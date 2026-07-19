@@ -1,5 +1,15 @@
 # Changelog — Skadoosh converter
 
+## 1.5.0 — 2026-07-19
+
+- **Nouvelle famille : Textes (Pandoc).** Déposez des `.docx`, `.odt`,
+  `.md`, `.rtf`, `.html`, `.epub`, `.txt`, `.tex` ou `.rst` et
+  convertissez-les en `docx`, `odt`, `md`, `rtf`, `html`, `epub` ou
+  `txt` — moteur **Pandoc**, installé d'un clic comme FFmpeg et
+  ImageMagick (`scripts/install-pandoc.ps1`, release GitHub officielle,
+  dossier de dépendances partagé sous Stargazer). Le codename
+  « Passe-partout » de l'EDITION-ROADMAP vit désormais ici.
+
 ## 1.4.0 — 2026-07-19
 
 - **Dossier de dépendances partagé.** Sous une installation Stargazer
