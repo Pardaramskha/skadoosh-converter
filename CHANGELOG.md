@@ -1,5 +1,12 @@
 # Changelog — Skadoosh converter
 
+## 1.4.0 — 2026-07-19
+
+- **Dossier de dépendances partagé.** Sous une installation Stargazer
+  complète, FFmpeg et ImageMagick s'installent et se cherchent dans
+  `<hub>\dependencies\` (partagé entre toutes les apps) ; en autonome,
+  `bin\` local comme avant. Recherche : partagé → `bin\` local → PATH.
+
 ## 1.3.0 — 2026-07-18
 
 - **Installation d'ImageMagick réparée.** L'index officiel

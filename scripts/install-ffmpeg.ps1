@@ -17,7 +17,16 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $Root      = Split-Path -Parent $ScriptDir
-if (-not $DestDir) { $DestDir = Join-Path $Root 'bin' }
+# Dossier des dependances : partage (<hub>\dependencies) quand l'app vit
+# dans une installation Stargazer complete, sinon bin\ local (autonome).
+if (-not $DestDir) {
+    $HubRoot = Split-Path -Parent (Split-Path -Parent $Root)
+    if ($HubRoot -and (Test-Path (Join-Path $HubRoot 'Stargazer.exe'))) {
+        $DestDir = Join-Path $HubRoot 'dependencies'
+    } else {
+        $DestDir = Join-Path $Root 'bin'
+    }
+}
 
 # Build « essentials » de gyan.dev - le paquet FFmpeg officiel compact.
 $ZipUrl = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'

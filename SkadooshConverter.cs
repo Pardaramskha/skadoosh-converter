@@ -161,18 +161,41 @@ namespace SkadooshConverter
             return false;
         }
 
+        // Dossier des dépendances actif : partagé (<hub>\dependencies) quand
+        // l'app vit dans une installation Stargazer complète (Stargazer.exe
+        // deux crans au-dessus), sinon bin\ local. Les outils communs
+        // (FFmpeg…) ne sont ainsi téléchargés qu'une fois pour tout le hub.
+        public static string DossierDependances(string appDir)
+        {
+            try
+            {
+                var hub = Path.GetDirectoryName(Path.GetDirectoryName(appDir));
+                if (hub != null && File.Exists(Path.Combine(hub, "Stargazer.exe")))
+                    return Path.Combine(hub, "dependencies");
+            }
+            catch { }
+            return Path.Combine(appDir, "bin");
+        }
+
+        // Recherche : dossier partagé, puis bin\ local (installations
+        // d'avant le partage), puis le PATH.
+        private static string TrouverOutil(string appDir, string exe)
+        {
+            var deps = Path.Combine(DossierDependances(appDir), exe);
+            if (File.Exists(deps)) return deps;
+            var local = Path.Combine(Path.Combine(appDir, "bin"), exe);
+            if (File.Exists(local)) return local;
+            return ChercherSurPath(exe);
+        }
+
         public static string TrouverFFmpeg(string appDir)
         {
-            var local = Path.Combine(Path.Combine(appDir, "bin"), "ffmpeg.exe");
-            if (File.Exists(local)) return local;
-            return ChercherSurPath("ffmpeg.exe");
+            return TrouverOutil(appDir, "ffmpeg.exe");
         }
 
         public static string TrouverMagick(string appDir)
         {
-            var local = Path.Combine(Path.Combine(appDir, "bin"), "magick.exe");
-            if (File.Exists(local)) return local;
-            return ChercherSurPath("magick.exe");
+            return TrouverOutil(appDir, "magick.exe");
         }
 
         private static string ChercherSurPath(string exe)
