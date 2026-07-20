@@ -1,0 +1,7 @@
+{
+  "id": "skadoosh-converter",
+  "nom": "Skadoosh converter",
+  "description": "Convertit images et audios d'un format à l'autre. Skadoosh.",
+  "app": "SkadooshConverter.app",
+  "motsCles": ["conversion", "convertir", "image", "audio", "heic", "webp", "avif", "pdf", "ico", "mp3"]
+}
