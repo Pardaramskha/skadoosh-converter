@@ -1,4 +1,37 @@
-# Changelog — Skadoosh converter
+# C# Changelog — Skadoosh converter
+
+## 1.7.0 — 2026-09-09
+
+- **Skadoosh converter prend son indépendance.** L'application quitte le
+  dépôt du hub Stargazer pour vivre dans le sien
+  (github.com/Pardaramskha/skadoosh-converter), d'où le hub la propose
+  sous « Applications disponibles ». Le dépôt se range : `src/` (un
+  fichier par classe), `tools/` (build.bat, release.ps1, setup-stub.cs,
+  make-icon.ps1), `assets/`, `scripts/`, et
+  `skadoosh-converter.stargazer.json` remplace `manifest.json`. L'édition
+  macOS vit sous `mac/` avec son propre hôte (`mac/lib/host.js`) et son
+  `deps.sh` — elle ne dépend plus du dossier `mac/` du hub.
+- **Release installable.** `tools/release.ps1` fabrique l'archive portable
+  Windows (celle que le hub télécharge), l'installeur autonome
+  `SkadooshConverter-Setup` (%LOCALAPPDATA%\Programs, raccourcis,
+  désinstallation depuis Paramètres, aucun droit admin), l'archive des
+  sources mac et l'auto-installeur `.command`.
+- **Mises à jour depuis l'application.** Barre de menus (Fichier, Aide) et
+  « Aide > Vérifier les mises à jour… » : la dernière release GitHub,
+  ses notes, et l'installation sur place avec redémarrage. Au lancement,
+  une vérification silencieuse : s'il y a plus récent, le menu Aide porte
+  un point. Le standard des apps de la famille Stargazer.
+- **Les moteurs dans un dossier partagé.** Hors du hub, FFmpeg, ImageMagick
+  et Pandoc vont dans `%LOCALAPPDATA%\Stargazer\dependencies` (mac :
+  `~/Library/Application Support/Stargazer/dependencies`), commun à toutes
+  les apps de la famille — jamais téléchargés deux fois. Dans le hub,
+  toujours `<hub>\dependencies` ; `STARGAZER_DEPS` prime. Plus de `bin\`
+  local.
+- **L'habillage rejoint la norme de la famille** : boutons arrondis à
+  icônes, liste des fichiers et liste des formats dans des cadres
+  arrondis, barre de titre sombre sur toutes les fenêtres, boîte de
+  dialogue maison (pastille de sens, détails techniques repliés) à la
+  place des MessageBox.
 
 ## 1.6.0 — 2026-07-19
 

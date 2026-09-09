@@ -37,6 +37,17 @@
   .st-err  { color: #e66e78; }
   .st-or   { color: var(--or); }
   body.occupe, body.occupe * { cursor: wait !important; }
+  #maj-pill {
+    display: none; margin-left: 10px; padding: 1px 9px; vertical-align: middle;
+    background: var(--or); color: #14141e; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  #maj-notes {
+    display: block; width: 100%; box-sizing: border-box; height: 170px; resize: none;
+    margin: 8px 0; padding: 8px 10px; background: var(--panneau); color: var(--texte);
+    border: 1px solid var(--bordure); border-radius: 8px; font: 13px -apple-system, sans-serif;
+  }
+  #maj-sous, #maj-etat { color: var(--texte-doux); font-size: 12.5px; }
 
   /* ------------------------------------------- surcouches (cf. hub.html) */
   .voile {
@@ -63,7 +74,7 @@
 </head>
 <body>
 
-<div id="intro" class="doux">Images, audio et textes — déposez, choisissez un format, skadoosh. Les moteurs se téléchargent tout seuls au premier besoin.</div>
+<div id="intro" class="doux">Images, audio et textes — déposez, choisissez un format, skadoosh. Les moteurs se téléchargent tout seuls au premier besoin.<span id="maj-pill"></span></div>
 <div id="divider"></div>
 <div id="files-label">Fichiers à convertir (même famille : images, audio ou textes) :</div>
 <div id="liste" class="liste"></div>
@@ -94,6 +105,20 @@
     <div id="inst-lignes" style="margin:14px 0 4px"></div>
     <progress id="inst-barre"></progress>
     <div class="boutons"><button id="inst-bouton" style="width:190px;height:30px">Continuer en arrière-plan</button></div>
+  </div>
+</div>
+
+<!-- mise à jour (menu Aide > Vérifier les mises à jour) -->
+<div class="voile" id="voile-maj">
+  <div class="dialogue" style="width:520px">
+    <h2 id="maj-titre">Mise à jour</h2>
+    <div id="maj-sous"></div>
+    <textarea id="maj-notes" readonly spellcheck="false"></textarea>
+    <div id="maj-etat"></div>
+    <div class="boutons">
+      <button id="btn-maj-annuler">Plus tard</button>
+      <button class="primaire" id="btn-maj-ok">Télécharger et installer</button>
+    </div>
   </div>
 </div>
 
@@ -221,11 +246,16 @@ async function ajouterFichiers(paths) {
 
 // --------------------------------------------------------------- moteurs
 
+// deps.sh est livré avec l'app ; il reçoit le dossier partagé calculé par
+// l'hôte (hub ou autonome) via STARGAZER_DEPS.
+function depsCmd() {
+  return 'STARGAZER_DEPS=' + shq(env.depsDir) + ' /bin/zsh ' + shq(env.appDir + '/scripts/deps.sh');
+}
+
 async function resoudreMoteurs() {
-  var deps = env.macRoot + '/scripts/deps.sh';
   var cles = ['ffmpeg', 'ffprobe', 'pandoc'];
   for (var i = 0; i < cles.length; i++) {
-    var r = await SG.shell('/bin/zsh ' + shq(deps) + ' where ' + cles[i]);
+    var r = await SG.shell(depsCmd() + ' where ' + cles[i]);
     moteurs[cles[i]] = r.ok ? r.out.trim() : '';
   }
 }
@@ -240,12 +270,11 @@ function moteursManquants() {
 }
 
 function scriptInstall(outils) {
-  var deps = env.macRoot + '/scripts/deps.sh';
   var log = env.appDir + '/logs/install.log';
   var liste = outils.join(' ');
   return 'mkdir -p ' + shq(env.appDir + '/logs') + '\n' +
     'TMPO="$(mktemp -t skadoosh-install)"\n' +
-    '/bin/zsh ' + shq(deps) + ' ensure ' + liste + ' > "$TMPO" 2>&1\n' +
+    depsCmd() + ' ensure ' + liste + ' > "$TMPO" 2>&1\n' +
     'CODE=$?\n' +
     'cat "$TMPO"\n' +
     '{ print -r -- "=== $(date \'+%Y-%m-%d %H:%M:%S\')  deps.sh ensure ' +
@@ -663,6 +692,125 @@ $id('liste').addEventListener('click', function (e) {
   if (l) l.classList.toggle('choisie');
 });
 
+// ============================================== mises à jour (menu Aide)
+// Le standard de la famille Stargazer : on interroge la dernière release
+// GitHub, on compare avec VERSION, et on installe. Sur Mac, l'installeur
+// est le .command de la release : téléchargé dans ~/Downloads puis ouvert
+// (il se déballe dans ~/Applications/Skadoosh converter et recompile
+// l'applet), l'app se relance ensuite. Au lancement, une vérification
+// silencieuse : s'il y a plus récent, une pastille apparaît dans l'intro.
+
+var DEPOT = 'Pardaramskha/skadoosh-converter';
+var NOM_COMMAND = 'SkadooshConverter-Setup-macOS.command';
+var NOM_APP = 'Skadoosh converter';
+var _maj = null;   // la mise à jour trouvée, s'il y en a une
+
+async function versionLocale() {
+  var t = (await SG.read(env.appDir + '/VERSION')).text;
+  return (t || '').trim() || '0.0.0';
+}
+
+function nombresDe(v) {
+  var r = [0, 0, 0], p = String(v || '').split('.');
+  for (var i = 0; i < 3 && i < p.length; i++) { var m = /\d+/.exec(p[i]); r[i] = m ? parseInt(m[0], 10) : 0; }
+  return r;
+}
+
+function plusRecente(distante, locale) {
+  var a = nombresDe(distante), b = nombresDe(locale);
+  for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return false;
+}
+
+async function verifierRelease() {
+  var r = await SG.shell('curl -sSL --max-time 15 -H "Accept: application/vnd.github+json" ' +
+    '-H "User-Agent: SkadooshConverter" https://api.github.com/repos/' + DEPOT + '/releases/latest');
+  if (!r.ok && !r.out) throw new Error('pas de connexion à GitHub.');
+  var j;
+  try { j = JSON.parse(r.out); } catch (e) { throw new Error('réponse GitHub illisible.'); }
+  if (!j.tag_name)
+    throw new Error(j.message === 'Not Found'
+      ? 'aucune version publiée trouvée (dépôt privé ou sans release).'
+      : (j.message || 'réponse GitHub illisible.'));
+  var url = null;
+  (j.assets || []).forEach(function (a) { if (a.name === NOM_COMMAND) url = a.browser_download_url; });
+  return { version: String(j.tag_name).replace(/^v/i, ''), urlCommand: url,
+    urlPage: j.html_url, notes: j.body || '' };
+}
+
+function montrerPastilleMaj(info) {
+  _maj = info;
+  var p = $id('maj-pill');
+  p.textContent = '● ' + NOM_APP + ' ' + info.version + ' disponible';
+  p.style.display = 'inline-block';
+}
+
+async function verifierMisesAJourEnFond() {
+  try {
+    var info = await verifierRelease();
+    if (plusRecente(info.version, await versionLocale())) montrerPastilleMaj(info);
+  } catch (e) { }
+}
+
+async function verifierMisesAJour() {
+  var info = _maj;
+  if (!info) {
+    try { info = await verifierRelease(); }
+    catch (e) {
+      await SG.alert({ title: 'Mises à jour', message: 'Impossible de vérifier les mises à jour : ' + e.message });
+      return;
+    }
+    var locale = await versionLocale();
+    if (!plusRecente(info.version, locale)) {
+      await SG.alert({ title: 'Mises à jour', message: 'Vous avez la dernière version de ' + NOM_APP + ' (' + locale + ').' });
+      return;
+    }
+  }
+  ouvrirMaj(info);
+}
+
+async function ouvrirMaj(info) {
+  $id('maj-titre').textContent = NOM_APP + ' ' + info.version + ' est disponible';
+  $id('maj-sous').textContent = 'Vous avez la ' + (await versionLocale()) + '. Ce qui change :';
+  $id('maj-notes').value = (info.notes || '').trim() || '(pas de notes pour cette version)';
+  var etat = $id('maj-etat');
+  etat.className = '';
+  etat.textContent = "L'installeur (" + NOM_COMMAND + ') est téléchargé dans ~/Downloads puis ouvert : ' +
+    'il déballe la nouvelle version dans ~/Applications/' + NOM_APP + ' et la recompile. Quittez l\'application à la fin et relancez-la.';
+  $id('btn-maj-ok').disabled = !info.urlCommand;
+  $id('voile-maj').classList.add('ouvert');
+}
+
+async function installerMaj() {
+  var info = _maj;
+  if (!info || !info.urlCommand) return;
+  var etat = $id('maj-etat');
+  var btn = $id('btn-maj-ok');
+  btn.disabled = true;
+  etat.className = '';
+  etat.textContent = 'Téléchargement de la version ' + info.version + '…';
+  var dest = env.home + '/Downloads/' + NOM_COMMAND;
+  var r = await SG.shell('curl -sSL --max-time 120 -o ' + shq(dest) + ' ' + shq(info.urlCommand) +
+    ' && chmod +x ' + shq(dest) + ' && open ' + shq(dest));
+  if (!r.ok) {
+    etat.className = 'st-err';
+    etat.textContent = 'Impossible : ' + ((r.err || '').trim().split('\n')[0] || 'téléchargement raté');
+    btn.disabled = false;
+    return;
+  }
+  etat.className = 'st-ok';
+  etat.textContent = "L'installeur s'exécute dans le Terminal. Quittez l'application quand il a fini, puis relancez-la.";
+}
+
+SG.on('verifierMaj', function () { verifierMisesAJour(); });
+SG.on('aPropos', async function () {
+  await SG.alert({ title: 'À propos de ' + NOM_APP, message: NOM_APP + ' ' + (await versionLocale()) +
+    " — convertit images, audio et textes d'un format à l'autre.\n\nUne application de la famille Stargazer, par Rémi Escamilla.\ngithub.com/" + DEPOT });
+});
+$id('maj-pill').onclick = function () { if (_maj) ouvrirMaj(_maj); };
+$id('btn-maj-ok').onclick = installerMaj;
+$id('btn-maj-annuler').onclick = function () { $id('voile-maj').classList.remove('ouvert'); };
+
 // ------------------------------------------------------------- démarrage
 
 (async function () {
@@ -676,6 +824,7 @@ $id('liste').addEventListener('click', function (e) {
     installProposee = true;
     ouvrirInstall(manquants);
   }
+  verifierMisesAJourEnFond();
 })();
 </script>
 </body>

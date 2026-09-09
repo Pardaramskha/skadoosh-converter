@@ -17,14 +17,21 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $Root      = Split-Path -Parent $ScriptDir
-# Dossier des dependances : partage (<hub>\dependencies) quand l'app vit
-# dans une installation Stargazer complete, sinon bin\ local (autonome).
+# Dossier des dependances, PARTAGE par toutes les apps de la famille
+# Stargazer (un moteur n'est jamais telecharge deux fois) : STARGAZER_DEPS
+# s'il est donne, sinon <hub>\dependencies quand l'app vit dans Stargazer
+# (Stargazer.exe deux niveaux au-dessus), sinon
+# %LOCALAPPDATA%\Stargazer\dependencies (app autonome).
 if (-not $DestDir) {
-    $HubRoot = Split-Path -Parent (Split-Path -Parent $Root)
-    if ($HubRoot -and (Test-Path (Join-Path $HubRoot 'Stargazer.exe'))) {
-        $DestDir = Join-Path $HubRoot 'dependencies'
+    if ($env:STARGAZER_DEPS) {
+        $DestDir = $env:STARGAZER_DEPS
     } else {
-        $DestDir = Join-Path $Root 'bin'
+        $HubRoot = Split-Path -Parent (Split-Path -Parent $Root)
+        if ($HubRoot -and (Test-Path (Join-Path $HubRoot 'Stargazer.exe'))) {
+            $DestDir = Join-Path $HubRoot 'dependencies'
+        } else {
+            $DestDir = Join-Path $env:LOCALAPPDATA 'Stargazer\dependencies'
+        }
     }
 }
 

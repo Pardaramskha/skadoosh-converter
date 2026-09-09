@@ -1,0 +1,13 @@
+# Fins de ligne : Windows en CRLF à l'extraction (comportement par défaut),
+# mais TOUT ce qui part sur un Mac reste en LF — un zsh ou un JXA en CRLF
+# ne démarre pas.
+* text=auto
+mac/** text eol=lf
+*.sh text eol=lf
+*.command text eol=lf
+
+# Binaires
+*.png binary
+*.ico binary
+*.exe binary
+*.zip binary

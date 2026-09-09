@@ -1,0 +1,17 @@
+# Exécutable compilé (tools\build.bat le refait) et artefacts de release (tools\release.ps1)
+*.exe
+dist/
+
+# Applet macOS compilé (mac/build.sh le refait)
+mac/*.app/
+
+# Journaux et dépendances téléchargées (les moteurs vivent dans le dossier
+# partagé de la famille Stargazer, jamais ici)
+logs/
+bin/
+mac/logs/
+mac/dependencies/
+
+# Poussière
+.DS_Store
+Thumbs.db
