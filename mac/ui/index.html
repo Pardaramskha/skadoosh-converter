@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Skadoosh converter</title>
+<link rel="stylesheet" href="sg/theme.css">
+<style>
+  body { position: relative; width: 600px; height: 470px; overflow: hidden; }
+
+  /* -------- inventaire des contrôles, positions de la spec (600 × 470) */
+  #intro       { position: absolute; left: 16px; top: 12px; width: 568px; height: 36px; }
+  #divider     { position: absolute; left: 16px; top: 58px; width: 568px; height: 1px;
+                 background: var(--bordure); }
+  #files-label { position: absolute; left: 16px; top: 70px; width: 450px; height: 20px; }
+  #liste       { position: absolute; left: 16px; top: 92px; width: 460px; height: 130px;
+                 font-size: 12px; }
+  #liste .ligne { white-space: pre; }
+  #btn-ajouter { position: absolute; left: 484px; top: 92px; width: 100px; height: 30px;
+                 padding: 0; }
+  #btn-vider   { position: absolute; left: 484px; top: 130px; width: 100px; height: 30px;
+                 padding: 0; }
+  #famille     { position: absolute; left: 16px; top: 230px; width: 568px; height: 20px; }
+  #cible-label { position: absolute; left: 16px; top: 262px; width: 100px; height: 22px; }
+  #cible       { position: absolute; left: 118px; top: 259px; width: 160px; height: 24px;
+                 padding: 2px 8px; }
+  #btn-convertir { position: absolute; left: 16px; top: 300px; width: 568px; height: 42px;
+                 font-size: 16px; font-weight: 600; padding: 0; }
+  #barre       { position: absolute; left: 16px; top: 358px; width: 568px; height: 16px; }
+  #statut      { position: absolute; left: 16px; top: 382px; width: 568px; height: 36px;
+                 overflow: hidden; }
+  #hint        { position: absolute; left: 16px; top: 424px; width: 568px; height: 20px;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .st-doux { color: var(--texte-doux); }
+  .st-info { color: #7aa2f7; }
+  .st-ok   { color: #98c379; }
+  .st-err  { color: #e66e78; }
+  .st-or   { color: var(--or); }
+  body.occupe, body.occupe * { cursor: wait !important; }
+
+  /* ------------------------------------------- surcouches (cf. hub.html) */
+  .voile {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(5, 8, 20, .72);
+    display: none; align-items: center; justify-content: center;
+  }
+  .voile.ouvert { display: flex; }
+  .dialogue {
+    background: var(--nuit);
+    border: 1px solid var(--bordure);
+    border-radius: 10px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.6);
+    padding: 18px 20px;
+    max-height: 86vh; overflow: auto;
+  }
+  .dialogue h2 { margin: 0 0 12px; font-size: 15px; }
+  .dialogue .boutons {
+    display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px;
+  }
+  .inst-ligne { margin: 4px 0 4px 8px; font-size: 12.5px; }
+  #inst-barre { margin-top: 10px; height: 8px; }
+</style>
+</head>
+<body>
+
+<div id="intro" class="doux">Images, audio et textes — déposez, choisissez un format, skadoosh. Les moteurs se téléchargent tout seuls au premier besoin.</div>
+<div id="divider"></div>
+<div id="files-label">Fichiers à convertir (même famille : images, audio ou textes) :</div>
+<div id="liste" class="liste"></div>
+<button id="btn-ajouter">Ajouter…</button>
+<button id="btn-vider">Vider</button>
+<div id="famille" class="st-doux">Famille détectée : aucun fichier</div>
+<div id="cible-label">Convertir en :</div>
+<select id="cible" disabled></select>
+<button id="btn-convertir" class="primaire">Skadoosh !</button>
+<progress id="barre" max="1" value="0"></progress>
+<div id="statut" class="st-doux">Ajoutez des fichiers, choisissez un format, et… skadoosh.</div>
+<div id="hint" class="doux">Les fichiers convertis sont créés à côté des originaux (jamais écrasés).</div>
+
+<!-- boîte de message générique (MessageBox → surcouche HTML) -->
+<div class="voile" id="voile-dialogue">
+  <div class="dialogue" style="width:464px">
+    <h2>Skadoosh converter</h2>
+    <div id="dlg-texte" style="white-space:pre-wrap"></div>
+    <div class="boutons" id="dlg-boutons"></div>
+  </div>
+</div>
+
+<!-- fenêtre « Premiers préparatifs » (installation auto des moteurs) -->
+<div class="voile" id="voile-install">
+  <div class="dialogue" style="width:460px">
+    <h2>Premiers préparatifs</h2>
+    <div id="inst-intro" class="st-doux">Un moteur manque : téléchargement en cours, rien à faire de votre côté. Une fois suffit — les prochains lancements seront directs.</div>
+    <div id="inst-lignes" style="margin:14px 0 4px"></div>
+    <progress id="inst-barre"></progress>
+    <div class="boutons"><button id="inst-bouton" style="width:190px;height:30px">Continuer en arrière-plan</button></div>
+  </div>
+</div>
+
+<script src="sg/app-shell.js"></script>
+<script>
+'use strict';
+
+// ------------------------------------------------------------------ état
+
+var env = null;
+var tmpDir = '/tmp';
+var moteurs = { ffmpeg: '', ffprobe: '', pandoc: '' };
+var fichiers = [];            // chemins complets, ordre d'ajout
+var famille = null;           // 'images' | 'audio' | 'textes'
+var enCours = false;
+var installProposee = false;  // une seule fois par session
+
+var EXT_IMAGES_SIPS = ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tif', 'tiff',
+  'ico', 'heic', 'heif'];
+var EXT_IMAGES_FFMPEG = ['webp', 'avif'];
+var EXT_AUDIO = ['mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'wma',
+  'opus', 'aiff'];
+var EXT_TEXTES = ['docx', 'odt', 'md', 'markdown', 'rtf', 'html', 'htm',
+  'epub', 'txt', 'tex', 'rst'];
+var CIBLES = {
+  images: ['png', 'jpg', 'webp', 'bmp', 'gif', 'tiff', 'ico', 'pdf'],
+  audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'opus'],
+  textes: ['docx', 'odt', 'md', 'rtf', 'html', 'epub', 'txt']
+};
+var NOMS_FAMILLE = { images: 'Images', audio: 'Audio',
+  textes: 'Textes (Pandoc)' };
+var EQUIV = { jpeg: 'jpg', tif: 'tiff', heif: 'heic', markdown: 'md',
+  htm: 'html' };
+
+function $id(id) { return document.getElementById(id); }
+function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+function ext(p) {
+  var m = String(p).match(/\.([^./]+)$/);
+  return m ? m[1].toLowerCase() : '';
+}
+function racineDe(p) {
+  var b = SG.basename(p);
+  var i = b.lastIndexOf('.');
+  return i > 0 ? b.slice(0, i) : b;
+}
+function canonique(e) { return EQUIV[e] || e; }
+function memeFormat(a, b) { return canonique(a) === canonique(b); }
+function familleDe(e) {
+  if (EXT_IMAGES_SIPS.indexOf(e) >= 0 || EXT_IMAGES_FFMPEG.indexOf(e) >= 0)
+    return 'images';
+  if (EXT_AUDIO.indexOf(e) >= 0) return 'audio';
+  if (EXT_TEXTES.indexOf(e) >= 0) return 'textes';
+  return null;
+}
+
+// ------------------------------------------------------------- dialogues
+
+function dialogue(texte, boutons) {
+  return new Promise(function (resolve) {
+    $id('dlg-texte').textContent = texte;
+    var conteneur = $id('dlg-boutons');
+    conteneur.innerHTML = '';
+    (boutons || ['OK']).forEach(function (b, i) {
+      var btn = document.createElement('button');
+      btn.textContent = b;
+      if (i === 0) btn.className = 'primaire';
+      btn.onclick = function () {
+        $id('voile-dialogue').classList.remove('ouvert');
+        resolve(i);
+      };
+      conteneur.appendChild(btn);
+    });
+    $id('voile-dialogue').classList.add('ouvert');
+  });
+}
+
+function setStatut(texte, classe) {
+  var el = $id('statut');
+  el.textContent = texte;
+  el.className = classe || 'st-doux';
+}
+
+// ---------------------------------------------------------------- liste
+
+function majUI() {
+  var el = $id('liste');
+  el.innerHTML = fichiers.map(function (f, i) {
+    return '<div class="ligne" data-i="' + i + '">' +
+      SG.echap(SG.basename(f)) + '   —   ' + SG.echap(SG.dirname(f)) +
+      '</div>';
+  }).join('');
+  var nom = famille ? NOMS_FAMILLE[famille] : 'aucun fichier';
+  $id('famille').textContent = 'Famille détectée : ' + nom +
+    (fichiers.length ? '  (' + fichiers.length + ' fichier(s))' : '');
+  var combo = $id('cible');
+  var items = famille ? CIBLES[famille] : [];
+  combo.innerHTML = items.map(function (c) {
+    return '<option value="' + c + '">' + c + '</option>';
+  }).join('');
+  combo.disabled = !famille || enCours;
+  if (items.length) combo.selectedIndex = 0;
+}
+
+async function ajouterFichiers(paths) {
+  var rejets = 0;
+  for (var i = 0; i < paths.length; i++) {
+    var p = paths[i];
+    var e = await SG.exists(p);
+    if (!e.exists) { rejets++; continue; }
+    var fam = familleDe(ext(p));
+    if (!fam) { rejets++; continue; }
+    if (famille && fam !== famille) { rejets++; continue; }   // verrou
+    var doublon = fichiers.some(function (f) {
+      return f.toLowerCase() === p.toLowerCase();
+    });
+    if (doublon) continue;   // ignoré sans erreur (compté comme accepté)
+    if (!famille) famille = fam;
+    fichiers.push(p);
+  }
+  majUI();
+  if (rejets > 0)
+    dialogue(rejets + " fichier(s) ignoré(s) : tous les fichiers d'un lot " +
+      'doivent appartenir à la même famille (images, audio ou textes).');
+}
+
+// --------------------------------------------------------------- moteurs
+
+async function resoudreMoteurs() {
+  var deps = env.macRoot + '/scripts/deps.sh';
+  var cles = ['ffmpeg', 'ffprobe', 'pandoc'];
+  for (var i = 0; i < cles.length; i++) {
+    var r = await SG.shell('/bin/zsh ' + shq(deps) + ' where ' + cles[i]);
+    moteurs[cles[i]] = r.ok ? r.out.trim() : '';
+  }
+}
+
+function moteursManquants() {
+  var m = [];
+  if (!moteurs.ffmpeg || !moteurs.ffprobe)
+    m.push({ nom: 'FFmpeg (audio)', outils: ['ffmpeg', 'ffprobe'] });
+  if (!moteurs.pandoc)
+    m.push({ nom: 'Pandoc (textes)', outils: ['pandoc'] });
+  return m;
+}
+
+function scriptInstall(outils) {
+  var deps = env.macRoot + '/scripts/deps.sh';
+  var log = env.appDir + '/logs/install.log';
+  var liste = outils.join(' ');
+  return 'mkdir -p ' + shq(env.appDir + '/logs') + '\n' +
+    'TMPO="$(mktemp -t skadoosh-install)"\n' +
+    '/bin/zsh ' + shq(deps) + ' ensure ' + liste + ' > "$TMPO" 2>&1\n' +
+    'CODE=$?\n' +
+    'cat "$TMPO"\n' +
+    '{ print -r -- "=== $(date \'+%Y-%m-%d %H:%M:%S\')  deps.sh ensure ' +
+    liste + ' — code $CODE ===" ; cat "$TMPO" ; } >> ' + shq(log) + '\n' +
+    'rm -f "$TMPO"\n' +
+    'exit $CODE\n';
+}
+
+// Fenêtre « Premiers préparatifs » : les moteurs s'installent l'un après
+// l'autre ; « Continuer en arrière-plan » rend la main sans interrompre.
+function ouvrirInstall(liste) {
+  return new Promise(function (resolve) {
+    var resolue = false;
+    function finir() { if (!resolue) { resolue = true; resolve(); } }
+
+    $id('inst-lignes').innerHTML = liste.map(function (m, i) {
+      return '<div class="inst-ligne st-doux" id="inst-l' + i + '">…  ' +
+        SG.echap(m.nom) + '</div>';
+    }).join('');
+    var intro = $id('inst-intro');
+    intro.textContent = 'Un moteur manque : téléchargement en cours, rien ' +
+      'à faire de votre côté. Une fois suffit — les prochains lancements ' +
+      'seront directs.';
+    intro.className = 'st-doux';
+    $id('inst-barre').style.display = 'block';
+    var bouton = $id('inst-bouton');
+    bouton.textContent = 'Continuer en arrière-plan';
+    bouton.onclick = function () {
+      $id('voile-install').classList.remove('ouvert');
+      finir();
+    };
+    $id('voile-install').classList.add('ouvert');
+
+    (async function () {
+      var echec = false;
+      for (var i = 0; i < liste.length; i++) {
+        var l = $id('inst-l' + i);
+        l.textContent = '⏳  ' + liste[i].nom + ' — téléchargement…';
+        l.className = 'inst-ligne st-info';
+        var code = await SG.task(scriptInstall(liste[i].outils), {});
+        if (code === 0) {
+          l.textContent = '✔  ' + liste[i].nom;
+          l.className = 'inst-ligne st-ok';
+        } else {
+          l.textContent = '✖  ' + liste[i].nom + ' — échec (connexion ?)';
+          l.className = 'inst-ligne st-err';
+          echec = true;
+        }
+      }
+      await resoudreMoteurs();
+      if (!echec) {
+        $id('voile-install').classList.remove('ouvert');
+        finir();
+      } else {
+        intro.textContent = 'Une installation a échoué — vérifiez la ' +
+          'connexion. Les détails sont dans logs/install.log ; ' +
+          "l'application retentera au prochain lancement.";
+        intro.className = 'st-err';
+        $id('inst-barre').style.display = 'none';
+        bouton.textContent = 'Continuer quand même';
+        // la promesse se résout au clic sur le bouton (modalité Windows)
+      }
+    })();
+  });
+}
+
+// ------------------------------------------------------------ conversion
+
+async function destinationUnique(dossier, base, extension) {
+  var candidat = dossier + '/' + base + '.' + extension;
+  if (!(await SG.exists(candidat)).exists) return candidat;
+  var n = 1;
+  while (true) {
+    candidat = dossier + '/' + base + ' (' + n + ').' + extension;
+    if (!(await SG.exists(candidat)).exists) return candidat;
+    n++;
+  }
+}
+
+// Lance un moteur en tâche de fond ; échec = code ≠ 0 ou destination
+// absente, message « <Moteur> a échoué : <première ligne> ».
+async function lancerMoteur(script, nomMoteur, dest) {
+  var sortie = '';
+  var code = await SG.task(script, {
+    onOutput: function (chunk) { sortie += chunk; }
+  });
+  var present = (await SG.exists(dest)).exists;
+  if (code !== 0 || !present) {
+    var ligne = sortie.split('\n').map(function (l) { return l.trim(); })
+      .filter(function (l) { return l; })[0] || '';
+    throw new Error(nomMoteur +
+      (ligne ? ' a échoué : ' + ligne : ' a échoué.'));
+  }
+}
+
+function cmdFfmpeg(source, dest) {
+  return shq(moteurs.ffmpeg) + ' -y -hide_banner -loglevel error -i ' +
+    shq(source) + ' ' + shq(dest);
+}
+function cmdSips(source, dest, cible) {
+  var fmt = { png: 'png', jpg: 'jpeg', bmp: 'bmp', gif: 'gif',
+    tiff: 'tiff' }[cible];
+  return 'sips -s format ' + fmt +
+    (cible === 'jpg' ? ' -s formatOptions 90' : '') + ' ' +
+    shq(source) + ' --out ' + shq(dest);
+}
+function cmdSipsPng(source, dest) {
+  return 'sips -s format png ' + shq(source) + ' --out ' + shq(dest);
+}
+
+function cheminTemp() {
+  var hex = '';
+  for (var i = 0; i < 32; i++)
+    hex += Math.floor(Math.random() * 16).toString(16);
+  return tmpDir + '/skadoosh_' + hex + '.png';
+}
+
+// PNG pivot (équivalent du « Magick -> PNG temp » Windows) : sips pour ce
+// que macOS lit nativement, FFmpeg pour WebP/AVIF.
+async function pivotPng(source) {
+  var temp = cheminTemp();
+  if (EXT_IMAGES_FFMPEG.indexOf(ext(source)) >= 0)
+    await lancerMoteur(cmdFfmpeg(source, temp), 'FFmpeg', temp);
+  else
+    await lancerMoteur(cmdSipsPng(source, temp), 'sips', temp);
+  return temp;
+}
+
+// ---------------------------------------------- écrivains ICO/PDF maison
+
+function chargerImage(chemin) {
+  return new Promise(function (resolve, reject) {
+    var img = new Image();
+    img.onload = function () { resolve(img); };
+    img.onerror = function () {
+      reject(new Error('image illisible : ' + SG.basename(chemin)));
+    };
+    img.src = 'file://' + encodeURI(chemin);
+  });
+}
+
+function dataUrlEnOctets(dataUrl) {
+  var bin = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
+  var octets = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) octets[i] = bin.charCodeAt(i);
+  return octets;
+}
+
+function octetsEnBase64(octets) {
+  var bin = '';
+  for (var i = 0; i < octets.length; i += 8192)
+    bin += String.fromCharCode.apply(null, octets.subarray(i, i + 8192));
+  return btoa(bin);
+}
+
+function chaineEnOctets(s) {
+  var b = new Uint8Array(s.length);
+  for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 0xff;
+  return b;
+}
+
+async function ecrireOctets(chemin, octets) {
+  var r = await SG.call('app.ecrireBase64',
+    { path: chemin, base64: octetsEnBase64(octets) });
+  if (r && r.err) throw new Error(r.err);
+}
+
+// ICO : conteneur à une seule entrée PNG 256×256, image réduite si besoin
+// (jamais agrandie), centrée sur fond transparent.
+async function ecrireIco(pngSource, dest) {
+  var img = await chargerImage(pngSource);
+  var cote = 256;
+  var canvas = document.createElement('canvas');
+  canvas.width = cote; canvas.height = cote;
+  var g = canvas.getContext('2d');
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  var echelle = Math.min(cote / img.naturalWidth, cote / img.naturalHeight);
+  if (echelle > 1) echelle = 1;
+  var w = Math.floor(img.naturalWidth * echelle);
+  var h = Math.floor(img.naturalHeight * echelle);
+  g.drawImage(img, Math.floor((cote - w) / 2), Math.floor((cote - h) / 2),
+    w, h);
+  var png = dataUrlEnOctets(canvas.toDataURL('image/png'));
+
+  // En-tête : réservé=0, type=1, count=1, l/h=0 (=256), planes=1, bpp=32,
+  // taille des données, offset données=22.
+  var ico = new Uint8Array(22 + png.length);
+  var vue = new DataView(ico.buffer);
+  vue.setUint16(0, 0, true);
+  vue.setUint16(2, 1, true);
+  vue.setUint16(4, 1, true);
+  ico[6] = 0; ico[7] = 0; ico[8] = 0; ico[9] = 0;
+  vue.setUint16(10, 1, true);
+  vue.setUint16(12, 32, true);
+  vue.setUint32(14, png.length, true);
+  vue.setUint32(18, 22, true);
+  ico.set(png, 22);
+  await ecrireOctets(dest, ico);
+}
+
+// PDF 1.4 minimal : une page à la taille de l'image (1 px @96 dpi =
+// 0,75 pt), image aplatie sur blanc, JPEG q=90 embarqué tel quel
+// (DCTDecode), 5 objets + xref + trailer. Aucun composant externe.
+function fmtPt(px) { return String(Math.round(px * 75) / 100); }
+
+async function ecrirePdf(pngSource, dest) {
+  var img = await chargerImage(pngSource);
+  var w = img.naturalWidth, h = img.naturalHeight;
+  var canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  var g = canvas.getContext('2d');
+  g.fillStyle = '#ffffff';   // fond blanc sous la transparence
+  g.fillRect(0, 0, w, h);
+  g.drawImage(img, 0, 0, w, h);
+  var jpeg = dataUrlEnOctets(canvas.toDataURL('image/jpeg', 0.9));
+
+  var wPt = fmtPt(w), hPt = fmtPt(h);
+  var contenu = 'q\n' + wPt + ' 0 0 ' + hPt + ' 0 0 cm\n/Im1 Do\nQ\n';
+
+  var morceaux = [], position = 0, offsets = [0, 0, 0, 0, 0, 0];
+  function pousser(o) { morceaux.push(o); position += o.length; }
+  function poserTexte(s) { pousser(chaineEnOctets(s)); }
+
+  poserTexte('%PDF-1.4\n');
+  offsets[1] = position;
+  poserTexte('1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n');
+  offsets[2] = position;
+  poserTexte('2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n');
+  offsets[3] = position;
+  poserTexte('3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + wPt +
+    ' ' + hPt + '] /Resources << /XObject << /Im1 4 0 R >> >> ' +
+    '/Contents 5 0 R >> endobj\n');
+  offsets[4] = position;
+  poserTexte('4 0 obj << /Type /XObject /Subtype /Image /Width ' + w +
+    ' /Height ' + h + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 ' +
+    '/Filter /DCTDecode /Length ' + jpeg.length + ' >> stream\n');
+  pousser(jpeg);
+  poserTexte('\nendstream endobj\n');
+  offsets[5] = position;
+  poserTexte('5 0 obj << /Length ' + contenu.length + ' >> stream\n' +
+    contenu + 'endstream endobj\n');
+
+  var xref = position;
+  var table = 'xref\n0 6\n0000000000 65535 f \n';
+  for (var i = 1; i <= 5; i++)
+    table += ('0000000000' + offsets[i]).slice(-10) + ' 00000 n \n';
+  poserTexte(table + 'trailer << /Size 6 /Root 1 0 R >>\nstartxref\n' +
+    xref + '\n%%EOF\n');
+
+  var total = new Uint8Array(position);
+  var pos = 0;
+  morceaux.forEach(function (m) { total.set(m, pos); pos += m.length; });
+  await ecrireOctets(dest, total);
+}
+
+// ------------------------------------------------- matrice de conversion
+
+async function convertirUn(source, cible) {
+  var dossier = SG.dirname(source);
+  var dest = await destinationUnique(dossier, racineDe(source), cible);
+  var e = ext(source);
+
+  if (famille === 'audio') {
+    await lancerMoteur(cmdFfmpeg(source, dest), 'FFmpeg', dest);
+    return;
+  }
+  if (famille === 'textes') {
+    var sortie = cible === 'txt' ? 'plain'
+      : (cible === 'md' ? 'markdown' : cible);
+    var cmd = shq(moteurs.pandoc) + ' --standalone ' +
+      (e === 'txt' ? '-f markdown ' : '') + '-t ' + sortie + ' -o ' +
+      shq(dest) + ' ' + shq(source);
+    await lancerMoteur(cmd, 'Pandoc', dest);
+    return;
+  }
+
+  // ------------------------------------------------------------- images
+  if (cible === 'ico' || cible === 'pdf') {
+    var temp = await pivotPng(source);
+    try {
+      if (cible === 'ico') await ecrireIco(temp, dest);
+      else await ecrirePdf(temp, dest);
+    } finally {
+      SG.shell('rm -f ' + shq(temp));
+    }
+    return;
+  }
+  if (cible === 'webp') {
+    if (e === 'heic' || e === 'heif') {
+      // FFmpeg ne lit pas le HEIC : pivot PNG via sips d'abord
+      var pivot = await pivotPng(source);
+      try { await lancerMoteur(cmdFfmpeg(pivot, dest), 'FFmpeg', dest); }
+      finally { SG.shell('rm -f ' + shq(pivot)); }
+    } else {
+      await lancerMoteur(cmdFfmpeg(source, dest), 'FFmpeg', dest);
+    }
+    return;
+  }
+  if (['png', 'jpg', 'bmp', 'gif', 'tiff'].indexOf(cible) < 0)
+    throw new Error('format cible inconnu : ' + cible);
+  if (EXT_IMAGES_FFMPEG.indexOf(e) >= 0)
+    await lancerMoteur(cmdFfmpeg(source, dest), 'FFmpeg', dest);
+  else
+    await lancerMoteur(cmdSips(source, dest, cible), 'sips', dest);
+}
+
+function moteurRequisPourLot(cible) {
+  if (famille === 'audio') return 'ffmpeg';
+  if (famille === 'textes') return 'pandoc';
+  if (famille === 'images') {
+    if (cible === 'webp') return 'ffmpeg';
+    for (var i = 0; i < fichiers.length; i++)
+      if (EXT_IMAGES_FFMPEG.indexOf(ext(fichiers[i])) >= 0) return 'ffmpeg';
+  }
+  return null;
+}
+
+// ---------------------------------------------------- « Skadoosh ! »
+
+async function convertir() {
+  if (enCours) return;
+  var combo = $id('cible');
+  var cible = combo.value;
+  if (!fichiers.length || !cible) {
+    dialogue("Ajoutez d'abord des fichiers à convertir.");
+    return;
+  }
+
+  await resoudreMoteurs();
+  var requis = moteurRequisPourLot(cible);
+  if (requis && !moteurs[requis]) {
+    // dernier filet : on rouvre la fenêtre d'installation
+    var def = requis === 'ffmpeg'
+      ? { nom: 'FFmpeg (audio)', outils: ['ffmpeg', 'ffprobe'] }
+      : { nom: 'Pandoc (textes)', outils: ['pandoc'] };
+    await ouvrirInstall([def]);
+    if (!moteurs[requis]) {
+      setStatut("Le moteur n'a pas pu être installé (connexion ?) — " +
+        'détails dans logs/install.log.', 'st-err');
+      return;
+    }
+  }
+
+  enCours = true;
+  document.body.classList.add('occupe');
+  $id('btn-ajouter').disabled = true;
+  $id('btn-vider').disabled = true;
+  $id('btn-convertir').disabled = true;
+  combo.disabled = true;
+  var barre = $id('barre');
+  barre.max = fichiers.length;
+  barre.value = 0;
+
+  var convertis = 0, deja = 0, erreurs = [];
+  for (var i = 0; i < fichiers.length; i++) {
+    var f = fichiers[i];
+    barre.value = i + 1;
+    setStatut('Conversion… ' + (i + 1) + ' / ' + fichiers.length + ' : ' +
+      SG.basename(f), 'st-info');
+    if (memeFormat(ext(f), cible)) { deja++; continue; }
+    try {
+      await convertirUn(f, cible);
+      convertis++;
+    } catch (err) {
+      var msg = String((err && err.message) || err);
+      erreurs.push(SG.basename(f) + ' : ' + msg);
+      SG.journal('Conversion de « ' + f + ' » : ' + msg);
+    }
+  }
+
+  barre.value = fichiers.length;
+  setStatut('Skadoosh ! ' + convertis + ' converti(s), ' + deja +
+    ' déjà au bon format, ' + erreurs.length + ' erreur(s).',
+    erreurs.length ? 'st-err' : 'st-ok');
+  if (erreurs.length) {
+    var lignes = erreurs.slice(0, 8).map(function (e) { return '- ' + e; });
+    var texte = 'Certaines conversions ont échoué :\n\n' + lignes.join('\n');
+    if (erreurs.length > 8)
+      texte += '\n… et ' + (erreurs.length - 8) + ' de plus.';
+    dialogue(texte);
+  }
+
+  enCours = false;
+  document.body.classList.remove('occupe');
+  $id('btn-ajouter').disabled = false;
+  $id('btn-vider').disabled = false;
+  $id('btn-convertir').disabled = false;
+  combo.disabled = !famille;
+}
+
+// ---------------------------------------------------------- branchements
+
+$id('btn-ajouter').onclick = async function () {
+  var r = await SG.chooseFile({
+    multiple: true,
+    prompt: 'Choisissez les fichiers à convertir',
+    types: EXT_IMAGES_SIPS.concat(EXT_IMAGES_FFMPEG, EXT_AUDIO, EXT_TEXTES)
+  });
+  if (r.paths && r.paths.length) ajouterFichiers(r.paths);
+};
+$id('btn-vider').onclick = function () {
+  if (enCours) return;
+  fichiers = [];
+  famille = null;
+  majUI();
+};
+$id('btn-convertir').onclick = function () { convertir(); };
+
+// amélioration mac : le glisser-déposer marche aussi dans la fenêtre
+SG.onDrop(function (paths) { if (!enCours) ajouterFichiers(paths); });
+
+$id('liste').addEventListener('click', function (e) {
+  var l = e.target.closest('.ligne');
+  if (l) l.classList.toggle('choisie');
+});
+
+// ------------------------------------------------------------- démarrage
+
+(async function () {
+  env = await SG.env();
+  var r = await SG.shell('print -rn -- "${TMPDIR:-/tmp}"');
+  if (r.ok && r.out) tmpDir = r.out.replace(/\/+$/, '');
+  majUI();
+  await resoudreMoteurs();
+  var manquants = moteursManquants();
+  if (manquants.length && !installProposee) {
+    installProposee = true;
+    ouvrirInstall(manquants);
+  }
+})();
+</script>
+</body>
+</html>

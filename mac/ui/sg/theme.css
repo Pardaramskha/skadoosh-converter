@@ -1,0 +1,141 @@
+/* theme.css — la charte Stargazer (bleu nuit / or), pixel-fidèle au
+   Theme.cs de la version Windows. Chaque ui/*.html l'inclut via
+   <link rel="stylesheet" href="sg/theme.css"> (copié par build-app.sh). */
+
+:root {
+  --nuit: #0b1026;          /* fond principal   (11, 16, 38)  */
+  --nuit-claire: #131a33;   /* panneaux, cartes (19, 26, 51)  */
+  --nuit-hover: #1c2547;    /* survol           (28, 37, 71)  */
+  --bordure: #2a3358;       /* traits           (42, 51, 88)  */
+  --or: #d4af37;            /* accent           (212,175,55)  */
+  --or-clair: #f4d77a;      /* accent clair     (244,215,122) */
+  --texte: #e6e6f0;         /* texte            (230,230,240) */
+  --texte-doux: #9aa3c0;    /* texte secondaire (154,163,192) */
+  --fond-macro: #1e2f60;    /* secteurs macro   (30, 47, 96)  */
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--nuit);
+  color: var(--texte);
+  font-family: -apple-system, "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+input, textarea, [contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ------------------------------------------------------------ boutons */
+/* RoundedButton : coins 8 px, bordure fine, survol éclairci. */
+
+button {
+  font: inherit;
+  color: var(--texte);
+  background: var(--nuit-claire);
+  border: 1px solid var(--bordure);
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  outline: none;
+}
+button:hover:not(:disabled) { background: var(--nuit-hover); }
+button:active:not(:disabled) { filter: brightness(1.15); }
+button:disabled { opacity: .45; cursor: default; }
+
+button.primaire {
+  background: var(--or);
+  border-color: var(--or);
+  color: #14141e;
+  font-weight: 600;
+}
+button.primaire:hover:not(:disabled) {
+  background: var(--or-clair);
+  border-color: var(--or-clair);
+}
+
+button.danger {
+  background: #7a2733;
+  border-color: #9a3743;
+  color: #ffdada;
+  font-weight: 600;
+}
+button.danger:hover:not(:disabled) { background: #93303e; }
+
+/* ------------------------------------------------------------ champs */
+
+input[type="text"], input[type="number"], input[type="search"],
+textarea, select {
+  font: inherit;
+  color: var(--texte);
+  background: var(--nuit-claire);
+  border: 1px solid var(--bordure);
+  border-radius: 4px;
+  padding: 5px 8px;
+  outline: none;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--or); }
+input::placeholder, textarea::placeholder { color: var(--texte-doux); }
+input:read-only { color: var(--texte-doux); }
+
+input[type="checkbox"], input[type="radio"] { accent-color: var(--or); }
+
+label { color: var(--texte); }
+
+/* ------------------------------------------------------------ divers */
+
+h1, h2, h3 { color: var(--or-clair); font-weight: 600; }
+a { color: var(--or-clair); text-decoration: none; }
+a:hover { text-decoration: underline; }
+hr { border: none; border-top: 1px solid var(--bordure); }
+
+.doux { color: var(--texte-doux); }
+.or { color: var(--or-clair); }
+
+.panneau {
+  background: var(--nuit-claire);
+  border: 1px solid var(--bordure);
+  border-radius: 8px;
+}
+
+/* listes type ListView */
+.liste {
+  background: var(--nuit-claire);
+  border: 1px solid var(--bordure);
+  overflow: auto;
+}
+.liste .ligne { padding: 4px 8px; white-space: nowrap; }
+.liste .ligne:hover { background: var(--nuit-hover); }
+.liste .ligne.choisie { background: var(--nuit-hover); }
+
+/* barre de progression façon liseré discret */
+progress {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  width: 100%;
+  border: none;
+  background: var(--nuit-claire);
+}
+progress::-webkit-progress-bar { background: var(--nuit-claire); }
+progress::-webkit-progress-value { background: var(--or); }
+
+/* étoile Stargazer à 4 branches (rose des vents), en pur CSS/SVG inline
+   côté pages ; classe utilitaire pour la teinte or */
+.etoile { fill: var(--or); }
+.etoile-claire { fill: var(--or-clair); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--bordure);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--nuit-hover); }
+::-webkit-scrollbar-track { background: transparent; }
