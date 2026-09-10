@@ -1,5 +1,11 @@
 # C# Changelog — Skadoosh converter
 
+## 1.7.1 — 2026-09-10
+
+- **Le vrai logo.** L'icône panda-converter de Rémi remplace le visuel
+  provisoire partout : l'exe, l'installeur, l'applet macOS, le fichier de
+  portage du hub. La bannière coiffe le README.
+
 ## 1.7.0 — 2026-09-09
 
 - **Skadoosh converter prend son indépendance.** L'application quitte le
