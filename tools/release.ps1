@@ -74,7 +74,8 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 $fichiers = @('SkadooshConverter.exe', 'skadoosh-converter.stargazer.json', 'VERSION',
               'assets\icon.png', 'assets\icon.ico',
-              'scripts\install-ffmpeg.ps1', 'scripts\install-magick.ps1', 'scripts\install-pandoc.ps1')
+              'scripts\install-ffmpeg.ps1', 'scripts\install-magick.ps1', 'scripts\install-pandoc.ps1',
+              'scripts\install-typst.ps1')
 foreach ($f in $fichiers) { Copier $f $stage }
 
 $zipWin = Join-Path $dist "skadoosh-converter-windows-portable.zip"

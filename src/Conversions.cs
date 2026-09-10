@@ -43,8 +43,10 @@ namespace SkadooshConverter
             new string[] { "png", "jpg", "webp", "bmp", "gif", "tiff", "ico", "pdf" };
         public static readonly string[] CiblesAudio =
             new string[] { "mp3", "wav", "flac", "ogg", "m4a", "opus" };
+        // PDF : Pandoc écrit du Typst, Typst compose le PDF (un seul binaire,
+        // polices embarquées — aucun LaTeX à installer).
         public static readonly string[] CiblesTexte =
-            new string[] { "docx", "odt", "md", "rtf", "html", "epub", "txt" };
+            new string[] { "docx", "odt", "md", "rtf", "html", "epub", "txt", "pdf" };
 
         public static Categorie CategorieDe(string path)
         {
@@ -54,6 +56,39 @@ namespace SkadooshConverter
             if (ExtsAudio.Contains(ext)) return Categorie.Audio;
             if (ExtsTexte.Contains(ext)) return Categorie.Texte;
             return Categorie.Aucune;
+        }
+
+        // Les motifs « *.png;*.jpg;… » d'une famille, pour le dialogue
+        // d'ouverture : une fois le lot commencé, on ne propose plus que
+        // sa famille (Aucune = toutes).
+        public static string MotifsDe(Categorie cat)
+        {
+            var exts = new List<string>();
+            if (cat == Categorie.Images || cat == Categorie.Aucune)
+            {
+                exts.AddRange(ExtsImages);
+                exts.AddRange(ExtsImagesMagick);
+            }
+            if (cat == Categorie.Audio || cat == Categorie.Aucune) exts.AddRange(ExtsAudio);
+            if (cat == Categorie.Texte || cat == Categorie.Aucune) exts.AddRange(ExtsTexte);
+            var motifs = new List<string>();
+            foreach (var e in exts) motifs.Add("*." + e);
+            return string.Join(";", motifs.ToArray());
+        }
+
+        // Le dossier commun à tous les fichiers du lot (les convertis sont
+        // créés à côté des originaux), ou null s'ils viennent de plusieurs
+        // dossiers.
+        public static string DossierCommun(IList<string> fichiers)
+        {
+            string dossier = null;
+            foreach (var f in fichiers)
+            {
+                var d = Path.GetDirectoryName(f);
+                if (dossier == null) dossier = d;
+                else if (!string.Equals(dossier, d, StringComparison.OrdinalIgnoreCase)) return null;
+            }
+            return dossier;
         }
 
         // Cette conversion a-t-elle besoin d'ImageMagick ? (source moderne
@@ -123,6 +158,11 @@ namespace SkadooshConverter
         public static string TrouverPandoc(string appDir)
         {
             return TrouverOutil(appDir, "pandoc.exe");
+        }
+
+        public static string TrouverTypst(string appDir)
+        {
+            return TrouverOutil(appDir, "typst.exe");
         }
 
         private static string ChercherSurPath(string exe)
@@ -374,22 +414,63 @@ namespace SkadooshConverter
 
         // ------------------------------ textes (Pandoc)
 
-        public static void ConvertirTexte(string pandoc, string source,
+        public static void ConvertirTexte(string pandoc, string typst, string source,
             string dest, string cible)
         {
             // pandoc déduit le format d'entrée de l'extension ; deux
             // exceptions : .txt (traité comme markdown) et la sortie .txt
             // (format « plain »). --standalone produit des documents complets.
-            var sortie = cible == "txt" ? "plain"
-                : (cible == "md" ? "markdown" : cible);
             var entree = "";
             var extSource = Path.GetExtension(source).TrimStart('.').ToLowerInvariant();
             if (extSource == "txt") entree = "-f markdown ";
 
+            if (cible == "pdf")
+            {
+                ConvertirTexteEnPdf(pandoc, typst, source, dest, entree);
+                return;
+            }
+
+            var sortie = cible == "txt" ? "plain"
+                : (cible == "md" ? "markdown" : cible);
+            LancerMoteur(pandoc, "--standalone " + entree + "-t " + sortie +
+                " -o \"" + dest + "\" \"" + source + "\"", null, "Pandoc", dest);
+        }
+
+        // PDF en deux temps, dans un dossier de travail temporaire : Pandoc
+        // écrit doc.typ et extrait les images incorporées (docx, epub, rtf…)
+        // dans media\ EN CHEMINS RELATIFS — Typst refuse les chemins absolus
+        // Windows (« C: ») que Pandoc produit quand il pilote lui-même le
+        // moteur (--pdf-engine). Puis « typst compile » compose le PDF.
+        private static void ConvertirTexteEnPdf(string pandoc, string typst,
+            string source, string dest, string entree)
+        {
+            if (typst == null) throw new Exception("Typst manque (moteur PDF des textes).");
+            var travail = Path.Combine(Path.GetTempPath(),
+                "skadoosh_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(travail);
+            try
+            {
+                var typ = Path.Combine(travail, "doc.typ");
+                LancerMoteur(pandoc, "--standalone " + entree +
+                    "--extract-media=media -t typst -o doc.typ \"" + source + "\"",
+                    travail, "Pandoc", typ);
+                LancerMoteur(typst, "compile doc.typ \"" + dest + "\"", travail, "Typst", dest);
+            }
+            finally
+            {
+                try { Directory.Delete(travail, true); } catch { }
+            }
+        }
+
+        // Lance un moteur en ligne de commande, fenêtre cachée, et vérifie
+        // qu'il a bien produit le fichier attendu.
+        private static void LancerMoteur(string exe, string arguments, string dossier,
+            string nom, string attendu)
+        {
             var psi = new System.Diagnostics.ProcessStartInfo();
-            psi.FileName = pandoc;
-            psi.Arguments = "--standalone " + entree + "-t " + sortie +
-                " -o \"" + dest + "\" \"" + source + "\"";
+            psi.FileName = exe;
+            psi.Arguments = arguments;
+            if (dossier != null) psi.WorkingDirectory = dossier;
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
             psi.RedirectStandardError = true;
@@ -397,8 +478,8 @@ namespace SkadooshConverter
             {
                 var err = proc.StandardError.ReadToEnd();
                 proc.WaitForExit();
-                if (proc.ExitCode != 0 || !File.Exists(dest))
-                    throw new Exception("Pandoc a échoué" +
+                if (proc.ExitCode != 0 || !File.Exists(attendu))
+                    throw new Exception(nom + " a échoué" +
                         (err.Trim().Length > 0 ? " : " + Premiereligne(err) : "."));
             }
         }

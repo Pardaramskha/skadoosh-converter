@@ -24,6 +24,7 @@ namespace SkadooshConverter
         private RoundedButton _clearButton;
         private Label _categoryLabel;
         private RoundedCombo _targetCombo;
+        private RoundedButton _folderButton;   // « Ouvrir le dossier » : le lot vient d'un seul dossier
         private ToolStripMenuItem _aide;
         private ToolStripMenuItem _verifierMaj;
         private Updater.Info _maj;        // la mise à jour trouvée au lancement, s'il y en a une
@@ -120,6 +121,16 @@ namespace SkadooshConverter
             _targetCombo.SetBounds(118, 285, 160, 30);
             _targetCombo.Enabled = false;
 
+            // Les convertis naissent à côté des originaux : quand tout le lot
+            // vient du même dossier, c'est le dossier de destination.
+            _folderButton = new RoundedButton();
+            _folderButton.Text = "Ouvrir le dossier";
+            _folderButton.Icone = "ouvrir";
+            _folderButton.SetBounds(424, 284, 160, 32);
+            Theme.StyleButton(_folderButton, false);
+            _folderButton.Visible = false;
+            _folderButton.Click += delegate(object s, EventArgs e) { OuvrirDossier(); };
+
             _convertButton = new RoundedButton();
             _convertButton.Text = "Skadoosh !";
             _convertButton.SetBounds(16, 328, 568, 42);
@@ -150,6 +161,7 @@ namespace SkadooshConverter
             Controls.Add(_categoryLabel);
             Controls.Add(targetLabel);
             Controls.Add(_targetCombo);
+            Controls.Add(_folderButton);
             Controls.Add(_convertButton);
             Controls.Add(_progress);
             Controls.Add(_status);
@@ -274,6 +286,9 @@ namespace SkadooshConverter
             if (Conversions.TrouverPandoc(_appDir) == null)
                 deps.Add(new string[] { "Pandoc (textes)",
                     Path.Combine(scripts, "install-pandoc.ps1") });
+            if (Conversions.TrouverTypst(_appDir) == null)
+                deps.Add(new string[] { "Typst (textes en PDF)",
+                    Path.Combine(scripts, "install-typst.ps1") });
             if (deps.Count == 0) return;
             using (var dlg = new FenetreInstallation(_appDir, deps))
                 dlg.ShowDialog(this);
@@ -287,10 +302,16 @@ namespace SkadooshConverter
             {
                 dlg.Title = "Choisissez les fichiers à convertir";
                 dlg.Multiselect = true;
-                dlg.Filter = "Tous les fichiers convertibles|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.ico;" +
-                    "*.heic;*.heif;*.webp;*.avif;" +
-                    "*.mp3;*.wav;*.flac;*.ogg;*.oga;*.m4a;*.aac;*.wma;*.opus;*.aiff;" +
-                    "*.docx;*.odt;*.md;*.markdown;*.rtf;*.html;*.htm;*.epub;*.txt;*.tex;*.rst|Tous les fichiers|*.*";
+                // Lot commencé ? Le dialogue ne montre plus que sa famille :
+                // un .jpeg n'a rien à faire dans un lot de .docx.
+                if (_categorie == Categorie.Aucune)
+                    dlg.Filter = "Tous les fichiers convertibles|" + Conversions.MotifsDe(Categorie.Aucune) +
+                        "|Images|" + Conversions.MotifsDe(Categorie.Images) +
+                        "|Audio|" + Conversions.MotifsDe(Categorie.Audio) +
+                        "|Textes|" + Conversions.MotifsDe(Categorie.Texte);
+                else
+                    dlg.Filter = NomFamille(_categorie) + " (la famille du lot en cours)|" +
+                        Conversions.MotifsDe(_categorie);
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 var rejets = 0;
                 foreach (var f in dlg.FileNames)
@@ -328,14 +349,22 @@ namespace SkadooshConverter
             MajCategorie();
         }
 
+        private static string NomFamille(Categorie cat)
+        {
+            if (cat == Categorie.Images) return "Images";
+            if (cat == Categorie.Audio) return "Audio";
+            if (cat == Categorie.Texte) return "Textes";
+            return "aucun fichier";
+        }
+
         private void MajCategorie()
         {
             _targetCombo.Items.Clear();
             string[] cibles = null;
-            string nom = "aucun fichier";
-            if (_categorie == Categorie.Images) { cibles = Conversions.CiblesImages; nom = "Images"; }
-            else if (_categorie == Categorie.Audio) { cibles = Conversions.CiblesAudio; nom = "Audio"; }
-            else if (_categorie == Categorie.Texte) { cibles = Conversions.CiblesTexte; nom = "Textes (Pandoc)"; }
+            string nom = NomFamille(_categorie);
+            if (_categorie == Categorie.Images) cibles = Conversions.CiblesImages;
+            else if (_categorie == Categorie.Audio) cibles = Conversions.CiblesAudio;
+            else if (_categorie == Categorie.Texte) { cibles = Conversions.CiblesTexte; nom += " (Pandoc)"; }
 
             _categoryLabel.Text = "Famille détectée : " + nom +
                 (_files.Count > 0 ? "  (" + _files.Count + " fichier(s))" : "");
@@ -349,6 +378,20 @@ namespace SkadooshConverter
             {
                 _targetCombo.Enabled = false;
             }
+            _folderButton.Visible = Conversions.DossierCommun(_files) != null;
+        }
+
+        // Le dossier commun du lot, dans l'Explorateur.
+        private void OuvrirDossier()
+        {
+            var dossier = Conversions.DossierCommun(_files);
+            if (dossier == null || !Directory.Exists(dossier)) return;
+            try { System.Diagnostics.Process.Start("explorer.exe", "\"" + dossier + "\""); }
+            catch (Exception ex)
+            {
+                MessageDialog.Show(this, "Impossible d'ouvrir le dossier : " + ex.Message,
+                    "Skadoosh converter", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         // -------------------------------------------------------- conversion
@@ -361,6 +404,7 @@ namespace SkadooshConverter
             public string Ffmpeg;
             public string Magick;
             public string Pandoc;
+            public string Typst;
         }
 
         private class BatchResult
@@ -387,6 +431,7 @@ namespace SkadooshConverter
             args.Ffmpeg = Conversions.TrouverFFmpeg(_appDir);
             args.Magick = Conversions.TrouverMagick(_appDir);
             args.Pandoc = Conversions.TrouverPandoc(_appDir);
+            args.Typst = Conversions.TrouverTypst(_appDir);
 
             // Dernier filet : un moteur manque encore (installation sautée ou
             // ratée au lancement) ? On le télécharge maintenant, directement.
@@ -394,15 +439,19 @@ namespace SkadooshConverter
             if (args.Cat == Categorie.Images && args.Magick == null)
                 foreach (var f in args.Files)
                     if (Conversions.NecessiteMagick(f, args.Cible)) { besoinMagick = true; break; }
+            var besoinTypst = args.Cat == Categorie.Texte && args.Cible == "pdf";
             if ((args.Cat == Categorie.Texte && args.Pandoc == null) ||
+                (besoinTypst && args.Typst == null) ||
                 (args.Cat == Categorie.Audio && args.Ffmpeg == null) || besoinMagick)
             {
                 InstallerManquantes();
                 args.Ffmpeg = Conversions.TrouverFFmpeg(_appDir);
                 args.Magick = Conversions.TrouverMagick(_appDir);
                 args.Pandoc = Conversions.TrouverPandoc(_appDir);
+                args.Typst = Conversions.TrouverTypst(_appDir);
                 var toujoursAbsent =
                     (args.Cat == Categorie.Texte && args.Pandoc == null) ||
+                    (besoinTypst && args.Typst == null) ||
                     (args.Cat == Categorie.Audio && args.Ffmpeg == null) ||
                     (besoinMagick && args.Magick == null);
                 if (toujoursAbsent)
@@ -449,7 +498,7 @@ namespace SkadooshConverter
                             Conversions.ConvertirImage(source, dest, args.Cible);
                     }
                     else if (args.Cat == Categorie.Texte)
-                        Conversions.ConvertirTexte(args.Pandoc, source, dest, args.Cible);
+                        Conversions.ConvertirTexte(args.Pandoc, args.Typst, source, dest, args.Cible);
                     else
                         Conversions.ConvertirAudio(args.Ffmpeg, source, dest);
 
@@ -499,6 +548,7 @@ namespace SkadooshConverter
             _addButton.Enabled = !busy;
             _clearButton.Enabled = !busy;
             _targetCombo.Enabled = !busy && _targetCombo.Items.Count > 0;
+            _folderButton.Enabled = !busy;
             _convertButton.Enabled = !busy;
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         }

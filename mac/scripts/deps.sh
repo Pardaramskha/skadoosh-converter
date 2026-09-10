@@ -6,7 +6,7 @@
 # DEPS ci-dessous), commun à toutes les apps de la famille Stargazer.
 #
 #   deps.sh ensure <outil>...   installe si absent (ffmpeg ffprobe yt-dlp
-#                               gallery-dl deno pandoc)
+#                               gallery-dl deno pandoc typst)
 #   deps.sh where <outil>       affiche le chemin (vide si absent)
 #   deps.sh present <outil>     code retour 0 si présent
 #
@@ -15,6 +15,8 @@
 #   ffmpeg     builds statiques macOS liés par ffmpeg.org
 #              (evermeet.cx en x86_64, martin-riedl.de en arm64)
 #   pandoc     zip macOS officiel (GitHub jgm/pandoc)
+#   typst      tar.xz apple-darwin officiel (GitHub typst/typst) — le
+#              moteur PDF des textes (Pandoc écrit du Typst)
 #   deno       zip apple-darwin officiel (GitHub denoland)
 #   gallery-dl pas de binaire mac officiel : on embarque un CPython
 #              portable (astral-sh/python-build-standalone) dans
@@ -112,6 +114,24 @@ installer_pandoc() {
   rm -rf "$tmp"
 }
 
+installer_typst() {
+  local motif tmp url
+  [[ "$ARCH" == "arm64" ]] && motif='aarch64-apple-darwin\.tar\.xz' \
+                           || motif='x86_64-apple-darwin\.tar\.xz'
+  url="$(github_asset_url typst/typst "$motif")"
+  [[ -n "$url" ]] || { say "ERREUR : release typst introuvable"; return 1; }
+  tmp="$(mktemp -d -t stargazer-typst)"
+  telecharger "$url" "$tmp/typst.tar.xz"
+  mkdir -p "$tmp/ext"
+  tar -xJf "$tmp/typst.tar.xz" -C "$tmp/ext"
+  local bin_trouve
+  bin_trouve="$(find "$tmp/ext" -type f -name typst | head -1)"
+  [[ -n "$bin_trouve" ]] || { say "ERREUR : binaire typst introuvable"; return 1; }
+  mv "$bin_trouve" "$BIN/typst"
+  chmod +x "$BIN/typst"; sans_quarantaine "$BIN/typst"
+  rm -rf "$tmp"
+}
+
 installer_deno() {
   local nom tmp
   [[ "$ARCH" == "arm64" ]] && nom="deno-aarch64-apple-darwin.zip" \
@@ -175,6 +195,7 @@ ensure_un() {
     ffmpeg)     installer_ffmpeg_un ffmpeg ;;
     ffprobe)    installer_ffmpeg_un ffprobe ;;
     pandoc)     installer_pandoc ;;
+    typst)      installer_typst ;;
     deno)       installer_deno ;;
     gallery-dl) installer_gallery_dl ;;
     *) say "outil inconnu : $outil"; return 1 ;;

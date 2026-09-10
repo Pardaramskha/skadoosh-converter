@@ -23,6 +23,9 @@
   #cible-label { position: absolute; left: 16px; top: 262px; width: 100px; height: 22px; }
   #cible       { position: absolute; left: 118px; top: 259px; width: 160px; height: 24px;
                  padding: 2px 8px; }
+  #btn-dossier { position: absolute; left: 424px; top: 256px; width: 160px; height: 30px;
+                 padding: 0; display: none; }
+  #btn-dossier.visible { display: block; }
   #btn-convertir { position: absolute; left: 16px; top: 300px; width: 568px; height: 42px;
                  font-size: 16px; font-weight: 600; padding: 0; }
   #barre       { position: absolute; left: 16px; top: 358px; width: 568px; height: 16px; }
@@ -83,6 +86,7 @@
 <div id="famille" class="st-doux">Famille détectée : aucun fichier</div>
 <div id="cible-label">Convertir en :</div>
 <select id="cible" disabled></select>
+<button id="btn-dossier" title="Le dossier du lot — les convertis y naissent, à côté des originaux">Ouvrir le dossier</button>
 <button id="btn-convertir" class="primaire">Skadoosh !</button>
 <progress id="barre" max="1" value="0"></progress>
 <div id="statut" class="st-doux">Ajoutez des fichiers, choisissez un format, et… skadoosh.</div>
@@ -130,7 +134,7 @@
 
 var env = null;
 var tmpDir = '/tmp';
-var moteurs = { ffmpeg: '', ffprobe: '', pandoc: '' };
+var moteurs = { ffmpeg: '', ffprobe: '', pandoc: '', typst: '' };
 var fichiers = [];            // chemins complets, ordre d'ajout
 var famille = null;           // 'images' | 'audio' | 'textes'
 var enCours = false;
@@ -146,7 +150,13 @@ var EXT_TEXTES = ['docx', 'odt', 'md', 'markdown', 'rtf', 'html', 'htm',
 var CIBLES = {
   images: ['png', 'jpg', 'webp', 'bmp', 'gif', 'tiff', 'ico', 'pdf'],
   audio: ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'opus'],
-  textes: ['docx', 'odt', 'md', 'rtf', 'html', 'epub', 'txt']
+  // pdf : Pandoc écrit du Typst, Typst compose le PDF (polices embarquées)
+  textes: ['docx', 'odt', 'md', 'rtf', 'html', 'epub', 'txt', 'pdf']
+};
+var EXT_FAMILLE = {
+  images: EXT_IMAGES_SIPS.concat(EXT_IMAGES_FFMPEG),
+  audio: EXT_AUDIO,
+  textes: EXT_TEXTES
 };
 var NOMS_FAMILLE = { images: 'Images', audio: 'Audio',
   textes: 'Textes (Pandoc)' };
@@ -220,6 +230,19 @@ function majUI() {
   }).join('');
   combo.disabled = !famille || enCours;
   if (items.length) combo.selectedIndex = 0;
+  // « Ouvrir le dossier » : seulement quand tout le lot vient du même
+  // dossier (les convertis y naissent, à côté des originaux)
+  $id('btn-dossier').classList.toggle('visible', dossierCommun() !== null);
+}
+
+function dossierCommun() {
+  var dossier = null;
+  for (var i = 0; i < fichiers.length; i++) {
+    var d = SG.dirname(fichiers[i]);
+    if (dossier === null) dossier = d;
+    else if (d !== dossier) return null;
+  }
+  return dossier;
 }
 
 async function ajouterFichiers(paths) {
@@ -253,19 +276,24 @@ function depsCmd() {
 }
 
 async function resoudreMoteurs() {
-  var cles = ['ffmpeg', 'ffprobe', 'pandoc'];
+  var cles = ['ffmpeg', 'ffprobe', 'pandoc', 'typst'];
   for (var i = 0; i < cles.length; i++) {
     var r = await SG.shell(depsCmd() + ' where ' + cles[i]);
     moteurs[cles[i]] = r.ok ? r.out.trim() : '';
   }
 }
 
+var DEFS_MOTEURS = {
+  ffmpeg: { nom: 'FFmpeg (audio)', outils: ['ffmpeg', 'ffprobe'] },
+  pandoc: { nom: 'Pandoc (textes)', outils: ['pandoc'] },
+  typst: { nom: 'Typst (textes en PDF)', outils: ['typst'] }
+};
+
 function moteursManquants() {
   var m = [];
-  if (!moteurs.ffmpeg || !moteurs.ffprobe)
-    m.push({ nom: 'FFmpeg (audio)', outils: ['ffmpeg', 'ffprobe'] });
-  if (!moteurs.pandoc)
-    m.push({ nom: 'Pandoc (textes)', outils: ['pandoc'] });
+  if (!moteurs.ffmpeg || !moteurs.ffprobe) m.push(DEFS_MOTEURS.ffmpeg);
+  if (!moteurs.pandoc) m.push(DEFS_MOTEURS.pandoc);
+  if (!moteurs.typst) m.push(DEFS_MOTEURS.typst);
   return m;
 }
 
@@ -543,11 +571,23 @@ async function convertirUn(source, cible) {
     return;
   }
   if (famille === 'textes') {
+    var entree = e === 'txt' ? '-f markdown ' : '';
+    if (cible === 'pdf') {
+      // Deux temps dans un dossier temporaire : Pandoc écrit doc.typ et
+      // extrait les images incorporées dans media/ (chemins relatifs),
+      // puis « typst compile » compose le PDF.
+      var cmdPdf = 'W="$(mktemp -d -t skadoosh-pdf)" && cd "$W" && ' +
+        shq(moteurs.pandoc) + ' --standalone ' + entree +
+        '--extract-media=media -t typst -o doc.typ ' + shq(source) + ' && ' +
+        shq(moteurs.typst) + ' compile doc.typ ' + shq(dest) + '; C=$?; ' +
+        'rm -rf "$W"; exit $C';
+      await lancerMoteur(cmdPdf, 'Pandoc/Typst', dest);
+      return;
+    }
     var sortie = cible === 'txt' ? 'plain'
       : (cible === 'md' ? 'markdown' : cible);
-    var cmd = shq(moteurs.pandoc) + ' --standalone ' +
-      (e === 'txt' ? '-f markdown ' : '') + '-t ' + sortie + ' -o ' +
-      shq(dest) + ' ' + shq(source);
+    var cmd = shq(moteurs.pandoc) + ' --standalone ' + entree + '-t ' +
+      sortie + ' -o ' + shq(dest) + ' ' + shq(source);
     await lancerMoteur(cmd, 'Pandoc', dest);
     return;
   }
@@ -582,15 +622,17 @@ async function convertirUn(source, cible) {
     await lancerMoteur(cmdSips(source, dest, cible), 'sips', dest);
 }
 
-function moteurRequisPourLot(cible) {
-  if (famille === 'audio') return 'ffmpeg';
-  if (famille === 'textes') return 'pandoc';
+// Les moteurs dont le lot a besoin (clés de DEFS_MOTEURS).
+function moteursRequisPourLot(cible) {
+  if (famille === 'audio') return ['ffmpeg'];
+  if (famille === 'textes')
+    return cible === 'pdf' ? ['pandoc', 'typst'] : ['pandoc'];
   if (famille === 'images') {
-    if (cible === 'webp') return 'ffmpeg';
+    if (cible === 'webp') return ['ffmpeg'];
     for (var i = 0; i < fichiers.length; i++)
-      if (EXT_IMAGES_FFMPEG.indexOf(ext(fichiers[i])) >= 0) return 'ffmpeg';
+      if (EXT_IMAGES_FFMPEG.indexOf(ext(fichiers[i])) >= 0) return ['ffmpeg'];
   }
-  return null;
+  return [];
 }
 
 // ---------------------------------------------------- « Skadoosh ! »
@@ -605,14 +647,13 @@ async function convertir() {
   }
 
   await resoudreMoteurs();
-  var requis = moteurRequisPourLot(cible);
-  if (requis && !moteurs[requis]) {
+  var requis = moteursRequisPourLot(cible);
+  var absents = requis.filter(function (k) { return !moteurs[k]; });
+  if (absents.length) {
     // dernier filet : on rouvre la fenêtre d'installation
-    var def = requis === 'ffmpeg'
-      ? { nom: 'FFmpeg (audio)', outils: ['ffmpeg', 'ffprobe'] }
-      : { nom: 'Pandoc (textes)', outils: ['pandoc'] };
-    await ouvrirInstall([def]);
-    if (!moteurs[requis]) {
+    await ouvrirInstall(absents.map(function (k) { return DEFS_MOTEURS[k]; }));
+    var toujoursAbsent = requis.some(function (k) { return !moteurs[k]; });
+    if (toujoursAbsent) {
       setStatut("Le moteur n'a pas pu être installé (connexion ?) — " +
         'détails dans logs/install.log.', 'st-err');
       return;
@@ -623,6 +664,7 @@ async function convertir() {
   document.body.classList.add('occupe');
   $id('btn-ajouter').disabled = true;
   $id('btn-vider').disabled = true;
+  $id('btn-dossier').disabled = true;
   $id('btn-convertir').disabled = true;
   combo.disabled = true;
   var barre = $id('barre');
@@ -662,6 +704,7 @@ async function convertir() {
   document.body.classList.remove('occupe');
   $id('btn-ajouter').disabled = false;
   $id('btn-vider').disabled = false;
+  $id('btn-dossier').disabled = false;
   $id('btn-convertir').disabled = false;
   combo.disabled = !famille;
 }
@@ -669,12 +712,22 @@ async function convertir() {
 // ---------------------------------------------------------- branchements
 
 $id('btn-ajouter').onclick = async function () {
+  // Lot commencé ? Le dialogue ne propose plus que sa famille : un .jpeg
+  // n'a rien à faire dans un lot de .docx.
   var r = await SG.chooseFile({
     multiple: true,
-    prompt: 'Choisissez les fichiers à convertir',
-    types: EXT_IMAGES_SIPS.concat(EXT_IMAGES_FFMPEG, EXT_AUDIO, EXT_TEXTES)
+    prompt: famille
+      ? 'Choisissez les fichiers à convertir (' + NOMS_FAMILLE[famille] +
+        ' — la famille du lot en cours)'
+      : 'Choisissez les fichiers à convertir',
+    types: famille ? EXT_FAMILLE[famille]
+      : EXT_IMAGES_SIPS.concat(EXT_IMAGES_FFMPEG, EXT_AUDIO, EXT_TEXTES)
   });
   if (r.paths && r.paths.length) ajouterFichiers(r.paths);
+};
+$id('btn-dossier').onclick = function () {
+  var d = dossierCommun();
+  if (d !== null) SG.openPath(d);
 };
 $id('btn-vider').onclick = function () {
   if (enCours) return;

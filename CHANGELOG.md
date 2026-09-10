@@ -1,5 +1,24 @@
 # C# Changelog — Skadoosh converter
 
+## 1.8.0 — 2026-09-10
+
+- **Les textes en PDF.** La famille Textes (docx, odt, md, rtf, html, epub,
+  txt, tex, rst) se convertit en PDF : Pandoc écrit du Typst, Typst compose
+  le PDF — un seul binaire, polices embarquées, aucun LaTeX. Typst rejoint
+  les moteurs installés tout seuls au premier besoin
+  (`scripts\install-typst.ps1`, mac : `deps.sh ensure typst`). Le PDF se
+  fabrique en deux temps dans un dossier temporaire, images incorporées
+  extraites en chemins relatifs (Typst refuse les chemins absolus Windows
+  que Pandoc produit quand il pilote le moteur lui-même).
+- **Le dialogue d'ouverture suit le lot.** Une fois un premier fichier
+  ajouté, « Ajouter… » ne propose plus que sa famille : un .jpeg n'a rien
+  à faire dans un lot de .docx. Liste vide : toutes les familles, avec un
+  filtre par famille.
+- **« Ouvrir le dossier ».** Quand tout le lot vient du même dossier — donc
+  le dossier de destination, les convertis naissant à côté des originaux —
+  un bouton l'ouvre dans l'Explorateur (le Finder sur mac). Plusieurs
+  dossiers : le bouton disparaît.
+
 ## 1.7.1 — 2026-09-10
 
 - **Le vrai logo.** L'icône panda-converter de Rémi remplace le visuel
