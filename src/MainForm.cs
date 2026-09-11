@@ -78,8 +78,7 @@ namespace SkadooshConverter
             // d'état ni de bouton — juste la promesse de la maison.
             var intro = new Label();
             intro.Text = "Images, audio et textes — déposez, choisissez un " +
-                "format, skadoosh. Les moteurs se téléchargent tout seuls " +
-                "au premier besoin.";
+                "format, skadoosh.";
             intro.SetBounds(16, 38, 568, 36);
             intro.ForeColor = Theme.TexteDoux;
 
@@ -251,8 +250,7 @@ namespace SkadooshConverter
         private void APropos()
         {
             MessageDialog.Show(this, Updater.Nom + " " + Updater.VersionLocale(_appDir) +
-                " — convertit images, audio et textes d'un format à l'autre.\n\n" +
-                "Une application de la famille Stargazer, par Rémi Escamilla.\n" +
+                " — Convertit les fichiers récalcitrants. Skadoosh..\n\nCréé par Rémi Escamilla, mais faites-en ce que vous voulez, vous êtes grands.\n" +
                 "github.com/" + Updater.Depot, "À propos", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 

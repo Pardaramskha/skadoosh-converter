@@ -11,7 +11,7 @@
 
 # Skadoosh converter
 
-MArre d'envoyer vos fichiers sur des serveurs chelous pour qu'ils soient convertis ? Nationalisez la conversion de vos fichiers avec SKADOOSH, un utilitaire bête et méchant qui change vos extensions et convertit localement !
+Marre d'envoyer vos fichiers sur des serveurs chelous pour qu'ils soient convertis ? Nationalisez la conversion de vos fichiers avec SKADOOSH, un utilitaire bête et méchant qui change vos extensions et convertit localement !
 
 > [!WARNING]
 > **Avertissement lié à l'IA**
@@ -34,7 +34,7 @@ Cliquez ensuite sur l'icône et c'est parti.
 Au lancement, Skadoosh va télécharger les **dépendances**, c'est à dire de petits scripts de lecture de formats de fichier dont vous aurez besoin pour la conversion.
 
 * FFmpeg (audios)
-* ImageMagik (images modernes)
+* ImageMagick (images modernes)
 * Pandoc (documents texte)
 * Typst (Textes vers PDF)
 

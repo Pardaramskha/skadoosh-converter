@@ -213,7 +213,7 @@ namespace SkadooshConverter.Setup
             tl.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, lnk, new object[] { dossier });
             tl.InvokeMember("IconLocation", BindingFlags.SetProperty, null, lnk, new object[] { exe + ",0" });
             tl.InvokeMember("Description", BindingFlags.SetProperty, null, lnk,
-                new object[] { "Convertit images, audio et textes d'un format à l'autre. Skadoosh." });
+                new object[] { "Convertit les fichiers récalcitrants. Skadoosh." });
             tl.InvokeMember("Save", BindingFlags.InvokeMethod, null, lnk, null);
         }
 
